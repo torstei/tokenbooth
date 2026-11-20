@@ -27,8 +27,8 @@ python3 -m venv .venv
 Each run starts with an empty browser. `keep_cookies` in the profile, or `--keep NAME@DOMAIN`,
 names cookies to carry into the next run, such as those that spare you 2-step verification.
 
-For a new site, let tokenbooth find the cookie: sign in by hand, close the window, and it
-prints a profile using the cookie that appeared with the login.
+For a new site, let tokenbooth find the cookie: sign in by hand, press "I'm logged in",
+and it prints a profile using the cookie that appeared with the login.
 
 ```sh
 .venv/bin/tokenbooth discover github --url https://github.com/login --via google > github.toml

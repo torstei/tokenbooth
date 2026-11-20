@@ -55,6 +55,7 @@ class Outcome:
     token: str | None = None
     expires: float | None = None
     timed_out: bool = False
+    confirmed: bool = False
 
 
 def cookie_name(cookie) -> str:
@@ -127,6 +128,10 @@ class LoginWindow(QMainWindow):
         row.addStretch(1)
         self.status = QLabel()
         row.addWidget(self.status)
+        if session.recorder and not popup:
+            done = QPushButton("I'm logged in")
+            done.clicked.connect(session.confirm_logged_in)
+            row.addWidget(done)
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.close)
         row.addWidget(cancel)
@@ -340,6 +345,11 @@ class Session:
         for window in self.windows:
             window.show_status("✓ got it")
         QTimer.singleShot(300, self.app.quit)
+
+    def confirm_logged_in(self) -> None:
+        self.outcome.confirmed = True
+        self.log("confirmed logged in")
+        QTimer.singleShot(0, self.app.quit)
 
     def time_out(self) -> None:
         self.outcome.timed_out = True

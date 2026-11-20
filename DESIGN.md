@@ -94,7 +94,7 @@ works with no profile file. Without `allowed_hosts`, the start URL's host and it
 are allowed.
 
 `tokenbooth discover NAME --url … [--via …]` finds the cookie for a new site. You sign in by
-hand and close the window; it lists the cookies on the start URL's site (the host without
+hand and press **I'm logged in** (Cancel or closing the window suggests nothing); it lists the cookies on the start URL's site (the host without
 `www.`, and without its first label when three or more remain) in the order they appeared,
 and prints a profile using the likeliest. A candidate is a cookie whose name first appeared
 after the run left the start page and that is still set at the end, so a session id that

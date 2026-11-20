@@ -53,8 +53,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     profile_options(sub.add_parser("login", parents=[common], help="always open the login window"))
     profile_options(sub.add_parser(
         "discover", parents=[common],
-        help="sign in by hand, close the window, and get the cookies that appeared with the login"
-             " and a profile using the likeliest one on stdout"))
+        help="sign in by hand and press \"I'm logged in\": lists the cookies that appeared with the"
+             " login and prints a profile using the likeliest one"))
     forget = sub.add_parser("forget", parents=[common], help="delete the cached token and the kept cookies")
     forget.add_argument("name")
     keep_set = sub.add_parser("keep-set", parents=[common], help="list the kept cookies (names, domains and expiry, never values)")
@@ -133,6 +133,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"tokenbooth: kept {len(kept)} cookie(s): "
                   + " ".join(f"{e['name']}@{e['domain']}" for e in kept), file=sys.stderr)
     if recorder:
+        if not outcome.confirmed:
+            print("tokenbooth: timed out" if outcome.timed_out else
+                  "tokenbooth: closed without confirming the login; nothing suggested", file=sys.stderr)
+            return EXIT_TIMEOUT if outcome.timed_out else EXIT_CANCELLED
         return report_discovery(profile, recorder)
     if outcome.token is None:
         print("tokenbooth: timed out" if outcome.timed_out else "tokenbooth: closed without a token", file=sys.stderr)
