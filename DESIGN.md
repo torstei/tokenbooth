@@ -93,6 +93,15 @@ Every key can also be given on the command line, so `tokenbooth get foo --url ht
 works with no profile file. Without `allowed_hosts`, the start URL's host and its subdomains
 are allowed.
 
+`tokenbooth discover NAME --url … [--via …]` finds the cookie for a new site. You sign in by
+hand and close the window; it lists the cookies on the start URL's site (the host without
+`www.`, and without its first label when three or more remain) in the order they appeared,
+and prints a profile using the likeliest. A candidate is a cookie whose name first appeared
+after the run left the start page and that is still set at the end, so a session id that
+existed before sign-in and was merely replaced (`JSESSIONID`) or a flag that flipped
+(`logged_in=no`) is never chosen. Among candidates, `HttpOnly`, a JWT value, and a name with
+`access`, `token`, `session` or `auth` in it rank higher. Values are looked at, never kept.
+
 Each run starts from an empty, off-the-record browser profile. `keep_cookies` names the
 cookies carried over: `NAME` is a glob on the cookie's name, `DOMAIN` a host glob on its
 domain without the leading dot, so `*@google.com` keeps every `.google.com` cookie and
@@ -427,6 +436,12 @@ and for Entra; then the agent and how the commands should look.
 From the prototype to the [security model](#security-model), in steps that each end in
 something that runs. Steps 1 and 3 can proceed in parallel once the booth's request format
 (1.3) is fixed; the daemon is built against a stub booth until then.
+
+The booth stays runnable on its own, as the user and without the daemon, the socket or a
+dynamic uid: `tokenbooth login` and `tokenbooth discover` from a checkout. That is how sites
+are explored, keep-sets narrowed and the booth tested, with the prototype's guarantees and
+none of the [security model](#security-model)'s; nothing a run like that holds should be
+trusted to it.
 
 ### Spikes first
 

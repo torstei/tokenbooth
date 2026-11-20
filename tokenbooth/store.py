@@ -95,7 +95,8 @@ class Profile:
     via: list[str] = field(default_factory=list)
 
     @classmethod
-    def load(cls, home: Path, name: str, overrides: dict, extra_hosts: list[str] = (), via: list[str] = ()) -> "Profile":
+    def load(cls, home: Path, name: str, overrides: dict, extra_hosts: list[str] = (), via: list[str] = (),
+             require_cookie: bool = True) -> "Profile":
         if not name or "/" in name or name.startswith("."):
             raise UsageError(f"bad profile name: {name!r}")
         path = home / "profiles" / f"{name}.toml"
@@ -111,7 +112,7 @@ class Profile:
             raise UsageError(f"{path}: unknown key(s): {', '.join(sorted(unknown))}")
         if not values.get("start_url"):
             raise UsageError(f"no start_url for {name!r}: give --url or create {path}")
-        if not values.get("cookie"):
+        if require_cookie and not values.get("cookie"):
             raise UsageError(f"no cookie to capture for {name!r}: give --cookie or set it in {path}")
         host = urlsplit(values["start_url"]).hostname or ""
         if urlsplit(values["start_url"]).scheme != "https" or not host:
@@ -126,6 +127,7 @@ class Profile:
             values["allowed_hosts"] += PROVIDERS[provider]["hosts"]
             if not values.get("user_agent") and "user_agent" in PROVIDERS[provider]:
                 values["user_agent"] = PROVIDERS[provider]["user_agent"]()
+        values.setdefault("cookie", "")
         values.setdefault("cookie_domain", base)
         values["keep_cookies"] = list(values.get("keep_cookies", []))
         for pattern in values["keep_cookies"]:

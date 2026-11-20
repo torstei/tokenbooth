@@ -27,8 +27,15 @@ python3 -m venv .venv
 Each run starts with an empty browser. `keep_cookies` in the profile, or `--keep NAME@DOMAIN`,
 names cookies to carry into the next run, such as those that spare you 2-step verification.
 
+For a new site, let tokenbooth find the cookie: sign in by hand, close the window, and it
+prints a profile using the cookie that appeared with the login.
+
+```sh
+.venv/bin/tokenbooth discover github --url https://github.com/login --via google > github.toml
+```
+
 `-v` logs navigations (without query strings) and cookie names (without values) to stderr —
-the way to find out which hosts and cookie a new site needs.
+the way to find out which hosts a new site needs: a navigation it blocks shows as `BLOCKED`.
 
 State lives in `--home`, `$TOKENBOOTH_HOME` or `~/.local/share/tokenbooth`; point it into a pidvault
 vault to keep the kept cookies and tokens out of reach of everything but unlocked shells.

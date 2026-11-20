@@ -8,8 +8,10 @@ import json
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from tokenbooth import store
+from tokenbooth.discover import Recorder, describe, site_of, suggest_profile
 
 EXIT_OK, EXIT_CANCELLED, EXIT_USAGE, EXIT_TIMEOUT = 0, 1, 2, 3
 
@@ -49,6 +51,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
     profile_options(sub.add_parser("get", parents=[common], help="print a cached token, or open the login window to get one"))
     profile_options(sub.add_parser("login", parents=[common], help="always open the login window"))
+    profile_options(sub.add_parser(
+        "discover", parents=[common],
+        help="sign in by hand, close the window, and get the cookies that appeared with the login"
+             " and a profile using the likeliest one on stdout"))
     forget = sub.add_parser("forget", parents=[common], help="delete the cached token and the kept cookies")
     forget.add_argument("name")
     keep_set = sub.add_parser("keep-set", parents=[common], help="list the kept cookies (names, domains and expiry, never values)")
@@ -61,6 +67,26 @@ def emit(token: str, expires: float | None, as_json: bool) -> None:
         print(json.dumps({"token": token, "expires": expires}))
     else:
         print(token)
+
+
+def report_discovery(profile: store.Profile, recorder: Recorder) -> int:
+    site = site_of(urlsplit(profile.start_url).hostname or "")
+    candidates = recorder.candidates(site)
+    print(f"tokenbooth: cookies on {site}, in the order they appeared:", file=sys.stderr)
+    for seen in recorder.site_cookies(site):
+        if seen in candidates:
+            mark = "*" if seen is candidates[0] else "+"
+        else:
+            mark = "-" if seen.before else " "
+        print(f"  {mark} {describe(seen)}", file=sys.stderr)
+    print("tokenbooth: * likeliest  + also new with the login  - set before the login started",
+          file=sys.stderr)
+    if not candidates:
+        print("tokenbooth: no cookie appeared with the login; did the sign-in finish before the window closed?",
+              file=sys.stderr)
+        return EXIT_CANCELLED
+    print(suggest_profile(profile, candidates[0]), end="")
+    return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,14 +106,17 @@ def main(argv: list[str] | None = None) -> int:
         overrides = {k: getattr(args, k) for k in (
             "start_url", "cookie", "cookie_domain", "done_url",
             "keep_cookies", "user_agent", "timeout")}
-        profile = store.Profile.load(home, args.name, overrides, args.extra_hosts, args.via)
+        discovering = args.command == "discover"
+        profile = store.Profile.load(home, args.name, overrides, args.extra_hosts, args.via,
+                                     require_cookie=not discovering)
 
         if args.command == "get" and (token := store.cached_token(home, profile.name)):
             emit(token, None, args.json)
             return EXIT_OK
 
         from tokenbooth import browser
-        outcome, kept = browser.run(profile, store.load_keep(home, profile.name), args.verbose)
+        recorder = Recorder() if discovering else None
+        outcome, kept = browser.run(profile, store.load_keep(home, profile.name), args.verbose, recorder)
     except store.UsageError as e:
         print(f"tokenbooth: {e}", file=sys.stderr)
         return EXIT_USAGE
@@ -100,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.verbose:
             print(f"tokenbooth: kept {len(kept)} cookie(s): "
                   + " ".join(f"{e['name']}@{e['domain']}" for e in kept), file=sys.stderr)
+    if recorder:
+        return report_discovery(profile, recorder)
     if outcome.token is None:
         print("tokenbooth: timed out" if outcome.timed_out else "tokenbooth: closed without a token", file=sys.stderr)
         return EXIT_TIMEOUT if outcome.timed_out else EXIT_CANCELLED

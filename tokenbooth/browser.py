@@ -6,6 +6,7 @@ import re
 import sys
 from dataclasses import dataclass
 
+from tokenbooth.discover import Recorder
 from tokenbooth.store import Profile, UsageError, host_matches, keep_matches
 
 
@@ -85,6 +86,8 @@ class LockedPage(QWebEnginePage):
             return True
         if self.session.allowed(url):
             self.session.log(f"navigate {loggable(url)}")
+            if self.session.recorder:
+                self.session.recorder.navigated(url.host(), url.path())
             return True
         self.session.log(f"BLOCKED  {loggable(url)}")
         self.session.blocked(url)
@@ -168,10 +171,12 @@ class LoginWindow(QMainWindow):
 
 
 class Session:
-    def __init__(self, app: QApplication, profile: Profile, keep: list[dict], verbose: bool):
+    def __init__(self, app: QApplication, profile: Profile, keep: list[dict], verbose: bool,
+                 recorder: Recorder | None = None):
         self.app = app
         self.profile = profile
         self.verbose = verbose
+        self.recorder = recorder
         self.outcome = Outcome()
         self.seed = keep
         self.unconfirmed: set[tuple[str, str, str]] = set()
@@ -290,6 +295,9 @@ class Session:
                 self.load_start_url()
         else:
             self.log(f"cookie set {key[0]} @ {key[1]}")
+        if self.recorder:
+            self.recorder.cookie_set(*key, cookie_value(cookie), http_only=cookie.isHttpOnly(),
+                                     secure=cookie.isSecure(), session=cookie.isSessionCookie())
         if self.keepable(cookie):
             self.kept[key] = QNetworkCookie(cookie)
         if not self.wanted(cookie):
@@ -300,6 +308,8 @@ class Session:
 
     def cookie_removed(self, cookie) -> None:
         key = cookie_key(cookie)
+        if self.recorder:
+            self.recorder.cookie_removed(*key)
         if key in self.kept and cookie_value(self.kept[key]) == cookie_value(cookie):
             del self.kept[key]
         if self.wanted(cookie) and self.pending and self.pending[0] == cookie_value(cookie):
@@ -351,11 +361,12 @@ class Session:
         shiboken6.delete(self.qprofile)
 
 
-def run(profile: Profile, keep: list[dict], verbose: bool) -> tuple[Outcome, list[dict]]:
+def run(profile: Profile, keep: list[dict], verbose: bool,
+        recorder: Recorder | None = None) -> tuple[Outcome, list[dict]]:
     app = QApplication([sys.argv[0]])
     app.setApplicationName("tokenbooth")
     app.setDesktopFileName("tokenbooth")
-    session = Session(app, profile, keep, verbose)
+    session = Session(app, profile, keep, verbose, recorder)
     session.start()
     app.exec()
     outcome, kept = session.outcome, session.keep_set()
