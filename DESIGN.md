@@ -418,6 +418,10 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
    - Keeping only the six cookies outside the session (`ACCOUNT_CHOOSER`, `NID`, `OTZ`,
      `SMSV`, `__Host-GAPS`, `__Secure-ENID`) offered the account and was then refused, without
      a retry; whether **remember the device** can be split from the session is open.
+   - Every refusal came before the booth hid `navigator.userAgentData` and the requested client
+     hints when claiming Firefox. The three Google sign-ins after it (two account choices from
+     a kept session, one full sign-in with 2-step) went through without a refusal or a retry.
+     Whether that is the fix or a calmer risk score is not settled.
 7. **Microsoft Entra** (a work app signing in through an Entra tenant, `--via microsoft`):
    - The embedded browser is accepted as it is, with QtWebEngine's own Chromium user agent:
      password and MFA went through without objection.
@@ -427,9 +431,19 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
      signed in** level works here too, and it is the whole Microsoft 365 account that is kept.
    - The app's own session arrives as cookies on its domain after the redirect back, so the
      token to capture is one of those, not anything at Microsoft.
+8. **GitHub, signing in through Google** (`--via google`): the whole chain works in the booth.
+   - After Google, GitHub asks for its own second factor (the push to its mobile app), even
+     when Google needed only an account choice.
+   - `tokenbooth discover` picks `user_session`, tied with `__Host-user_session_same_site`,
+     which carries the same value. `saved_user_sessions`, set just before them, holds a user
+     id with the token and is passed over because its value is not opaque.
+   - `user_session` is the whole web session of the account. GitHub lets you register OAuth
+     apps and issue scoped tokens, which serve an API far better, so GitHub shows that the
+     booth works rather than being a site to harvest.
 
-Still open: GitHub; whether **remember the device** can be split from the session, for Google
-and for Entra; then the agent and how the commands should look.
+Still open: whether **remember the device** can be split from the session, for Google and for
+Entra; whether GitHub's `_device_id` spares its second factor; then the agent and how the
+commands should look.
 
 ## Implementation plan
 
