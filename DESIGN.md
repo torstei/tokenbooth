@@ -409,9 +409,18 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
    - Keeping only the six cookies outside the session (`ACCOUNT_CHOOSER`, `NID`, `OTZ`,
      `SMSV`, `__Host-GAPS`, `__Secure-ENID`) offered the account and was then refused, without
      a retry; whether **remember the device** can be split from the session is open.
+7. **Microsoft Entra** (a work app signing in through an Entra tenant, `--via microsoft`):
+   - The embedded browser is accepted as it is, with QtWebEngine's own Chromium user agent:
+     password and MFA went through without objection.
+   - Keeping the cookies set on `login.microsoftonline.com` and `login.live.com`, among them
+     `ESTSAUTH` and `ESTSAUTHPERSISTENT`, makes the next login silent: the authorize request
+     redirects straight back to the app, with no sign-in page, password or MFA. The **stay
+     signed in** level works here too, and it is the whole Microsoft 365 account that is kept.
+   - The app's own session arrives as cookies on its domain after the redirect back, so the
+     token to capture is one of those, not anything at Microsoft.
 
-Still open: Entra and GitHub; whether the saved session makes the next login a single click;
-then the agent and how the commands should look.
+Still open: GitHub; whether **remember the device** can be split from the session, for Google
+and for Entra; then the agent and how the commands should look.
 
 ## Implementation plan
 
