@@ -1,0 +1,5 @@
+start_url       = "https://gopro.com/login"
+cookie          = "gp_access_token"
+cookie_domain   = "gopro.com"
+via             = ["google"]
+persist_session = true

@@ -1,0 +1,88 @@
+"""tokenbooth: log in to a site in a locked-down browser window and print the token it leaves behind.
+
+Exit status: 0 token printed, 1 window closed without a token, 2 usage error, 3 timed out.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from tokenbooth import store
+
+EXIT_OK, EXIT_CANCELLED, EXIT_USAGE, EXIT_TIMEOUT = 0, 1, 2, 3
+
+
+def profile_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("name", help="profile name; reads <home>/profiles/NAME.toml if it exists")
+    p.add_argument("--url", dest="start_url", help="login page to open")
+    p.add_argument("--cookie", help="name of the cookie that holds the token")
+    p.add_argument("--cookie-domain", help="domain the cookie must belong to (default: the start URL's)")
+    p.add_argument("--allow", dest="extra_hosts", action="append", default=[], metavar="HOST",
+                   help="also allow navigation to HOST (glob, repeatable), on top of the profile's allowed_hosts"
+                        " or, without one, the start host and its subdomains")
+    p.add_argument("--via", action="append", default=[], metavar="PROVIDER",
+                   help="sign in through an identity provider: allow its hosts and adapt to it (known: google)")
+    p.add_argument("--done-url", help="regex the page URL must match before the cookie counts")
+    p.add_argument("--persist", dest="persist_session", action="store_true", default=None,
+                   help="keep the browser session in <home>/sessions/NAME between runs")
+    p.add_argument("--no-persist", dest="persist_session", action="store_false")
+    p.add_argument("--user-agent", help="replace the user agent string")
+    p.add_argument("--timeout", type=int, help="seconds before giving up (default 600, 0 = never)")
+    p.add_argument("--json", action="store_true", help='print {"token": ..., "expires": ...} instead of the bare token')
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="tokenbooth", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--home", type=Path, help="state directory (default: $TOKENBOOTH_HOME or ~/.local/share/tokenbooth)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="log navigations and cookie names (never values) to stderr")
+    sub = parser.add_subparsers(dest="command", required=True)
+    profile_options(sub.add_parser("get", help="print a cached token, or open the login window to get one"))
+    profile_options(sub.add_parser("login", help="always open the login window"))
+    forget = sub.add_parser("forget", help="delete the cached token and the saved browser session")
+    forget.add_argument("name")
+    return parser.parse_args(argv)
+
+
+def emit(token: str, expires: float | None, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps({"token": token, "expires": expires}))
+    else:
+        print(token)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    home = args.home or store.default_home()
+    try:
+        if args.command == "forget":
+            for path in store.forget(home, args.name):
+                print(f"removed {path}", file=sys.stderr)
+            return EXIT_OK
+
+        overrides = {k: getattr(args, k) for k in (
+            "start_url", "cookie", "cookie_domain", "done_url",
+            "persist_session", "user_agent", "timeout")}
+        profile = store.Profile.load(home, args.name, overrides, args.extra_hosts, args.via)
+
+        if args.command == "get" and (token := store.cached_token(home, profile.name)):
+            emit(token, None, args.json)
+            return EXIT_OK
+
+        from tokenbooth import browser
+        outcome = browser.run(profile, home, args.verbose)
+    except store.UsageError as e:
+        print(f"tokenbooth: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    except ImportError as e:
+        print(f"tokenbooth: {e}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if outcome.token is None:
+        print("tokenbooth: timed out" if outcome.timed_out else "tokenbooth: closed without a token", file=sys.stderr)
+        return EXIT_TIMEOUT if outcome.timed_out else EXIT_CANCELLED
+    expires = store.save_token(home, profile.name, outcome.token, outcome.expires)
+    emit(outcome.token, expires, args.json)
+    return EXIT_OK

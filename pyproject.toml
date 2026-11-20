@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tokenbooth"
+version = "0.0.1"
+description = "Log in to a site in a locked-down browser window and print the token it leaves behind"
+requires-python = ">=3.11"
+dependencies = ["PySide6-Essentials>=6.8", "PySide6-WebEngine"]
+
+[project.scripts]
+tokenbooth = "tokenbooth.cli:main"
+
+[tool.setuptools]
+packages = ["tokenbooth"]
