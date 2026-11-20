@@ -79,8 +79,8 @@ def report_discovery(profile: store.Profile, recorder: Recorder) -> int:
         else:
             mark = "-" if seen.before else " "
         print(f"  {mark} {describe(seen)}", file=sys.stderr)
-    print("tokenbooth: * likeliest  + also new with the login  - set before the login started",
-          file=sys.stderr)
+    print("tokenbooth: * likeliest  + also new with the login  - set before the login started"
+          "  (blank) its name was set before, or it is gone again", file=sys.stderr)
     if not candidates:
         print("tokenbooth: no cookie appeared with the login; did the sign-in finish before the window closed?",
               file=sys.stderr)
