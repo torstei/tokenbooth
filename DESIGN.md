@@ -59,8 +59,8 @@ is all the API needs. Today `mushcam gopro-login` asks you to paste it from deve
 
 Python + PySide6 (QtWebEngine, i.e. Chromium) for the prototype. The pip wheels bundle a
 current Qt, so client-hint control and WebAuthn are available. From 6.12, QtWebEngine is its own
-wheel, `PySide6-WebEngine`, no longer part of `PySide6-Addons`. A packaged version could move to
-C++ against distro Qt later; Ubuntu 24.04's Qt 6.4 is too old for some of what is used here.
+wheel, `PySide6-WebEngine`, no longer part of `PySide6-Addons`. Which engine a package uses is
+open; see [Packaging the engine](#packaging-the-engine).
 
 ## Home directory (prototype)
 
@@ -388,7 +388,7 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
    there. `--via google` / `via = ["google"]` bundles those hosts and the user agent.
    If Google stops accepting this, the fallback is a second engine: the real Chrome binary on
    its own profile, controlled over `--remote-debugging-pipe` (reachable only by tokenbooth), so
-   that Google sees genuine Chrome.
+   that Google sees genuine Chrome ([Packaging the engine](#packaging-the-engine), P3).
 3. **Host globs:** `*` matches exactly one DNS label and only a leading `*.` matches any depth,
    so `accounts.google.*` admits `accounts.google.no` but not `accounts.google.evil.com`.
 4. **A booth runs as a dynamic uid and draws through a passed connection** (spike S1,
@@ -457,6 +457,32 @@ are explored, keep-sets narrowed and the booth tested, with the prototype's guar
 none of the [security model](#security-model)'s; nothing a run like that holds should be
 trusted to it.
 
+### Packaging the engine
+
+The booth renders third-party login pages, so its Chromium needs security fixes as soon as
+Chrome gets them, sandbox or not. Whoever ships that Chromium owns that duty. Everything else
+in the package is small and ours: the daemon and client, the booth launcher
+`/usr/lib/tokenbooth/booth` and its AppArmor profile, the systemd units and the site
+descriptions.
+
+| | Engine | The package | Who ships Chromium fixes |
+|---|---|---|---|
+| P1 | The distribution's Qt WebEngine | Small; depends on `python3-pyside6.qtwebenginewidgets` | The distribution. Ubuntu carries it in universe, community-maintained, a Qt release or more behind; Debian's release notes list qtwebengine as having limited security support. Ubuntu 24.04's Qt 6.4 is too old for client-hint control. |
+| P2 | PySide6 wheels vendored under `/usr/lib/tokenbooth`, pinned with hashes | Large: the wheels are about 670 MB, Chromium alone about 200 MB | Us: a tokenbooth release for every Qt patch release that carries Chromium fixes |
+| P3 | Google Chrome from Google's apt repository, driven over `--remote-debugging-pipe` | Small; depends on `google-chrome-stable` | Google, through apt. Ubuntu's `chromium-browser` is a snap and cannot run inside the booth unit. |
+
+P3 is the intended default for a package, so tokenbooth never ships Chromium itself; it also
+lets Google see a genuine Chrome, and the Firefox user agent and client-hint script can go.
+The DevTools protocol covers what the booth needs: `Network.setCookies` and
+`Network.getCookies` for the keep-set, the user agent override, scripts added before any page
+script runs, and navigations held at the request stage to enforce the host allowlist. The
+locked-down window itself becomes switches and protocol calls instead of Qt code: `--app=` for
+a window without an address bar, `Browser.setDownloadBehavior` to deny downloads, permission
+requests refused. Chrome's managed policies are not an option, since `/etc/opt/chrome/policies`
+would bind the owner's own Chrome as well. Qt WebEngine (P1 or a venv) stays
+the engine for development and experiments. Only `browser.py` knows which engine runs; profiles,
+the keep-set and discovery do not. P3 adds Google to [A5](#adversaries).
+
 ### Spikes first
 
 Each of these could change the plan, so each is settled before the code that depends on it.
@@ -467,6 +493,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | S2 | Does Chromium's sandbox run under that unit, with an AppArmor profile allowing user namespaces, and does software rendering suffice? | Settled: yes, with an interpreter of the booth's own ([shown](#what-the-prototype-has-shown), 5) |
 | S3 | Which Google cookies remember the device without keeping the session, and does `setCookie` into an off-the-record profile before the first navigation make the next login skip 2-step verification? | A keep-set for each of the three levels, or the finding that remember-the-device cannot be split off |
 | S4 | Does the pidvault check in [Asking pidvault](#asking-pidvault) hold, including the pid-reuse case? | A test passes a connection on and exits, and is refused |
+| S5 | Can the booth unit run Google Chrome (P3) as S1 and S2 run Qt WebEngine: as a dynamic uid with no home, on the passed Wayland fd (`--ozone-platform=wayland`), with its sandbox on under an AppArmor profile, controlled only over `--remote-debugging-pipe`; and do the GoPro login and the keep-set work through the DevTools protocol with Chrome's own user agent? | The renderer has its own PID namespace and seccomp filter, no debugging port is open, and `tokenbooth get gopro` works on Chrome |
 
 ### Steps
 
@@ -485,7 +512,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 3.3 | Keep-set encrypted with the key from the vault; the token cache | |
 | 3.4 | Token delivery: over the socket, into a vault file, on stdout | |
 | 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory | |
-| 4 | **Packaging**: `.deb`, sysusers, the socket and `DynamicUser` template units with `ProtectHome=yes`, the booth executable `/usr/lib/tokenbooth/booth` and its AppArmor profile, PySide6 pinned with hashes under `/usr/lib/tokenbooth` | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
+| 4 | **Packaging**: `.deb`, sysusers, the socket and `DynamicUser` template units with `ProtectHome=yes`, the booth executable `/usr/lib/tokenbooth/booth` and its AppArmor profile, the engine as [S5](#spikes-first) decides (P3, or P2 if Chrome does not fit) | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
 | 5 | **pidvault**: `status` and `unlocked_by` documented as a contract with a test; the control-socket peer held by pidfd | |
 | 6 | **mushcam** reads the token from a vault file or through a small socket library | `mushcam` no longer asks for a pasted cookie |
 
