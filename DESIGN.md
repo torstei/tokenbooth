@@ -133,6 +133,12 @@ removes it and otherwise reports the engine's real Chromium version. The rest of
   (`QWebEngineClientHints`, Qt 6.8+). With PySide6 6.12 (Chromium 140) they already report
   plain `Chromium` with no Qt brand, and `navigator.webdriver` is false, so after the UA fix the
   window presents as a stock Chromium. Claiming to be Google Chrome would mean adding that brand.
+  Claiming a browser that is not Chromium-based (Firefox, for Google) contradicts them, since
+  only Chromium has client hints. The booth then removes `navigator.userAgentData` before any
+  page script runs, in subframes too, and turns off the hints a site asks for with
+  `Accept-CH`. The low-entropy `Sec-CH-UA`, `-Mobile` and `-Platform` headers still go out:
+  QtWebEngine 6.12 lets a request interceptor blank them but not drop them, and an empty
+  header is a stranger tell than an honest one.
 - **Engine version lag.** QtWebEngine trails Chrome; claiming a newer Chrome than the engine is
   can be detected from features.
 - **Google** judges more than the string ("This browser or app may not be secure"). Other

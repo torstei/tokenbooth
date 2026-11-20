@@ -24,6 +24,7 @@ from PySide6.QtWebEngineCore import (  # noqa: E402
     QWebEnginePage,
     QWebEnginePermission,
     QWebEngineProfile,
+    QWebEngineScript,
     QWebEngineSettings,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: E402
@@ -42,6 +43,10 @@ ACCENT_TEXT = "#ffffff"
 
 
 SEED_TIMEOUT_MS = 3000
+
+# Only Chromium-based browsers have client hints; a page that sees them next to another
+# browser's user agent sees a contradiction.
+HIDE_USER_AGENT_DATA = "delete Navigator.prototype.userAgentData;"
 
 
 @dataclass
@@ -186,7 +191,18 @@ class Session:
         user_agent = profile.user_agent or re.sub(r"\s*QtWebEngine/\S+", "", self.qprofile.httpUserAgent())
         self.qprofile.setHttpUserAgent(user_agent)
         self.log(f"user agent {user_agent}")
-        self.log(f"client hints {self.qprofile.clientHints().fullVersionList()}")
+        if "Chrome/" not in user_agent:
+            self.qprofile.clientHints().setAllClientHintsEnabled(False)
+            script = QWebEngineScript()
+            script.setName("hide-user-agent-data")
+            script.setSourceCode(HIDE_USER_AGENT_DATA)
+            script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+            script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            script.setRunsOnSubFrames(True)
+            self.qprofile.scripts().insert(script)
+            self.log("client hints off: the user agent is not Chromium's")
+        else:
+            self.log(f"client hints {self.qprofile.clientHints().fullVersionList()}")
 
         settings = self.qprofile.settings()
         for attribute, on in [
