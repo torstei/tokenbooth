@@ -29,3 +29,7 @@ State lives in `--home`, `$TOKENBOOTH_HOME` or `~/.local/share/tokenbooth`; poin
 vault to keep sessions and tokens out of reach of everything but unlocked shells.
 
 Exit status: 0 token printed, 1 window closed without one, 2 usage error, 3 timed out.
+
+## License
+
+Licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE)).
