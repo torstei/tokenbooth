@@ -105,3 +105,17 @@ def test_common_options_default_when_absent():
     from tokenbooth.cli import parse_args
     args = parse_args(["keep-set", "gopro"])
     assert (args.home, args.verbose) == (None, False)
+
+
+def test_via_microsoft_allows_its_hosts_and_keeps_the_engines_user_agent(tmp_path):
+    write_profile(tmp_path, 'start_url = "https://app.example.com/"\ncookie = "t"\nvia = ["microsoft"]\n')
+    profile = store.Profile.load(tmp_path, "p", {})
+    assert profile.user_agent == ""
+    assert {"login.microsoftonline.com", "login.live.com"} <= set(profile.allowed_hosts)
+    assert "app.example.com" in profile.allowed_hosts
+
+
+def test_unknown_provider_names_the_known_ones(tmp_path):
+    write_profile(tmp_path, 'start_url = "https://app.example.com/"\ncookie = "t"\nvia = ["okta"]\n')
+    with pytest.raises(store.UsageError, match="google, microsoft"):
+        store.Profile.load(tmp_path, "p", {})

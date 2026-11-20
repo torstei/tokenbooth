@@ -33,6 +33,10 @@ PROVIDERS = {
         "hosts": ["accounts.google.*", "accounts.google.co.*", "accounts.google.com.*", "accounts.youtube.com"],
         "user_agent": firefox_ua,
     },
+    # Entra accepts the embedded engine as it is; personal accounts go through login.live.com.
+    "microsoft": {
+        "hosts": ["login.microsoftonline.com", "login.microsoft.com", "login.live.com"],
+    },
 }
 
 
@@ -120,7 +124,7 @@ class Profile:
             if provider not in PROVIDERS:
                 raise UsageError(f"unknown identity provider {provider!r} (known: {', '.join(PROVIDERS)})")
             values["allowed_hosts"] += PROVIDERS[provider]["hosts"]
-            if not values.get("user_agent"):
+            if not values.get("user_agent") and "user_agent" in PROVIDERS[provider]:
                 values["user_agent"] = PROVIDERS[provider]["user_agent"]()
         values.setdefault("cookie_domain", base)
         values["keep_cookies"] = list(values.get("keep_cookies", []))

@@ -23,7 +23,7 @@ def profile_options(p: argparse.ArgumentParser) -> None:
                    help="also allow navigation to HOST (glob, repeatable), on top of the profile's allowed_hosts"
                         " or, without one, the start host and its subdomains")
     p.add_argument("--via", action="append", default=[], metavar="PROVIDER",
-                   help="sign in through an identity provider: allow its hosts and adapt to it (known: google)")
+                   help="sign in through an identity provider: allow its hosts and adapt to it (known: google, microsoft)")
     p.add_argument("--done-url", help="regex the page URL must match before the cookie counts")
     p.add_argument("--keep", dest="keep_cookies", action="append", metavar="NAME@DOMAIN",
                    help="keep matching cookies for the next run (globs, repeatable); replaces the profile's keep_cookies")
