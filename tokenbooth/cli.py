@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from tokenbooth import store
-from tokenbooth.discover import Recorder, describe, site_of, suggest_profile
+from tokenbooth.discover import Recorder, describe, site_of, suggest_profile, tied
 
 EXIT_OK, EXIT_CANCELLED, EXIT_USAGE, EXIT_TIMEOUT = 0, 1, 2, 3
 
@@ -85,6 +85,9 @@ def report_discovery(profile: store.Profile, recorder: Recorder) -> int:
         print("tokenbooth: no cookie appeared with the login; did the sign-in finish before the window closed?",
               file=sys.stderr)
         return EXIT_CANCELLED
+    if len(even := tied(candidates)) > 1:
+        print("tokenbooth: these rank the same, so the first to appear was chosen; check which one the"
+              " site's requests need: " + ", ".join(f"{s.name}@{s.domain}" for s in even), file=sys.stderr)
     print(suggest_profile(profile, candidates[0]), end="")
     return EXIT_OK
 

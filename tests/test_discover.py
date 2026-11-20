@@ -24,6 +24,7 @@ def test_github_through_google_picks_the_session_not_what_existed_before():
     cookie(r, "SID", ".google.com", "g" * 70)
     r.navigated("github.com", "/sessions/social/google/callback")
     r.navigated("github.com", "/sessions/two-factor/mobile")
+    cookie(r, "saved_user_sessions", "github.com", "1234567:" + "u" * 48, http_only=True)
     cookie(r, "user_session", "github.com", "u" * 48, http_only=True)
     cookie(r, "__Host-user_session_same_site", "github.com", "u" * 48, http_only=True)
     cookie(r, "logged_in", ".github.com", "yes", http_only=True)
@@ -32,7 +33,8 @@ def test_github_through_google_picks_the_session_not_what_existed_before():
 
     names = [s.name for s in r.candidates("github.com")]
     assert names[0] == "user_session"
-    assert set(names) == {"user_session", "__Host-user_session_same_site", "dotcom_user"}
+    assert set(names) == {"user_session", "__Host-user_session_same_site", "saved_user_sessions", "dotcom_user"}
+    assert [s.name for s in discover.tied(r.candidates("github.com"))] == ["user_session", "__Host-user_session_same_site"]
 
 
 def test_entra_app_ignores_a_session_id_that_was_merely_replaced():

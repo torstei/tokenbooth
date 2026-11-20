@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from tokenbooth.store import PROVIDERS, Profile, jwt_expiry
 
 NAME_HINT = re.compile(r"access|token|session|auth|jwt", re.IGNORECASE)
+OPAQUE = re.compile(r"[A-Za-z0-9._~+/=-]{16,}")
 
 
 @dataclass
@@ -22,10 +23,12 @@ class Seen:
     session: bool = True
     length: int = 0
     jwt: bool = False
+    opaque: bool = False
 
     @property
     def score(self) -> int:
-        return 4 * self.http_only + 2 * self.jwt + 2 * bool(NAME_HINT.search(self.name)) + self.secure + (self.length >= 20)
+        return (4 * self.http_only + 2 * self.jwt + 2 * bool(NAME_HINT.search(self.name))
+                + 2 * self.opaque + self.secure)
 
 
 def site_of(host: str) -> str:
@@ -69,6 +72,7 @@ class Recorder:
         seen.http_only, seen.secure, seen.session = http_only, secure, session
         seen.length = len(value)
         seen.jwt = looks_like_jwt(value) or jwt_expiry(value) is not None
+        seen.opaque = OPAQUE.fullmatch(value) is not None
 
     def cookie_removed(self, name: str, domain: str, path: str) -> None:
         if seen := self.cookies.get((name, domain, path)):
@@ -85,9 +89,13 @@ class Recorder:
         return sorted(fresh, key=lambda s: (-s.score, s.order))
 
 
+def tied(candidates: list[Seen]) -> list[Seen]:
+    return [s for s in candidates if s.score == candidates[0].score] if candidates else []
+
+
 def describe(seen: Seen) -> str:
-    flags = [f for f, on in (("HttpOnly", seen.http_only), ("Secure", seen.secure),
-                             ("JWT", seen.jwt), ("session", seen.session)) if on]
+    flags = [f for f, on in (("HttpOnly", seen.http_only), ("Secure", seen.secure), ("JWT", seen.jwt),
+                             ("opaque", seen.opaque), ("session", seen.session)) if on]
     return f"{seen.name}@{seen.domain}{seen.path}  {seen.length} chars  {' '.join(flags)}".rstrip()
 
 
