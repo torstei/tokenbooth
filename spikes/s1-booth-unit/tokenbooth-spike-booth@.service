@@ -1,0 +1,12 @@
+[Unit]
+Description=tokenbooth spike S1: one booth
+
+[Service]
+DynamicUser=yes
+BindReadOnlyPaths=@REPO@:/opt/tokenbooth-spike
+ExecStart=/opt/tokenbooth-spike/.venv/bin/python -I /opt/tokenbooth-spike/spikes/s1-booth-unit/booth.py
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/tmp QT_QPA_PLATFORM=wayland XDG_RUNTIME_DIR=/tmp
+RuntimeMaxSec=900

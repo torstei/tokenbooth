@@ -1,0 +1,6 @@
+abi <abi/5.0>,
+include <tunables/global>
+
+profile tokenbooth-spike-booth /opt/tokenbooth-spike-bin/bin/booth flags=(unconfined) {
+  userns,
+}
