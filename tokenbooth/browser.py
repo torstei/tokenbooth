@@ -1,12 +1,12 @@
 """The locked-down login window."""
 
+import base64
 import os
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
-from tokenbooth.store import Profile, UsageError, host_matches, private_dir, session_path
+from tokenbooth.store import Profile, UsageError, host_matches, keep_matches
 
 
 def harden_environment() -> None:
@@ -19,6 +19,7 @@ harden_environment()
 
 import shiboken6  # noqa: E402
 from PySide6.QtCore import Qt, QTimer, QUrl  # noqa: E402
+from PySide6.QtNetwork import QNetworkCookie  # noqa: E402
 from PySide6.QtWebEngineCore import (  # noqa: E402
     QWebEnginePage,
     QWebEnginePermission,
@@ -40,11 +41,26 @@ ACCENT = "#c2185b"
 ACCENT_TEXT = "#ffffff"
 
 
+SEED_TIMEOUT_MS = 3000
+
+
 @dataclass
 class Outcome:
     token: str | None = None
     expires: float | None = None
     timed_out: bool = False
+
+
+def cookie_name(cookie) -> str:
+    return bytes(cookie.name()).decode(errors="replace")
+
+
+def cookie_value(cookie) -> str:
+    return bytes(cookie.value()).decode(errors="replace")
+
+
+def cookie_key(cookie) -> tuple[str, str, str]:
+    return cookie_name(cookie), cookie.domain(), cookie.path()
 
 
 def loggable(url: QUrl) -> str:
@@ -147,25 +163,24 @@ class LoginWindow(QMainWindow):
 
 
 class Session:
-    def __init__(self, app: QApplication, profile: Profile, home: Path, verbose: bool):
+    def __init__(self, app: QApplication, profile: Profile, keep: list[dict], verbose: bool):
         self.app = app
         self.profile = profile
         self.verbose = verbose
         self.outcome = Outcome()
+        self.seed = keep
+        self.unconfirmed: set[tuple[str, str, str]] = set()
+        self.kept: dict[tuple[str, str, str], QNetworkCookie] = {}
+        self.started = False
         self.windows: list[LoginWindow] = []
         self.closed: list[LoginWindow] = []
         self.pending: tuple[str, float | None] | None = None
         self.main_url = QUrl()
         self.done_url = re.compile(profile.done_url) if profile.done_url else None
 
-        if profile.persist_session:
-            storage = private_dir(session_path(home, profile.name))
-            self.qprofile = QWebEngineProfile(f"tokenbooth-{profile.name}")
-            self.qprofile.setPersistentStoragePath(str(storage))
-            self.qprofile.setCachePath(str(storage / "cache"))
-            self.qprofile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
-        else:
-            self.qprofile = QWebEngineProfile()
+        self.qprofile = QWebEngineProfile()
+        if not self.qprofile.isOffTheRecord():
+            raise UsageError("the browser profile is not off the record")
         self.qprofile.setPersistentPermissionsPolicy(QWebEngineProfile.PersistentPermissionsPolicy.AskEveryTime)
 
         user_agent = profile.user_agent or re.sub(r"\s*QtWebEngine/\S+", "", self.qprofile.httpUserAgent())
@@ -216,28 +231,73 @@ class Session:
         return window
 
     def start(self) -> None:
-        self.open_window(popup=False).page.load(QUrl(self.profile.start_url))
+        self.window = self.open_window(popup=False)
+        store = self.qprofile.cookieStore()
+        for entry in self.seed:
+            for cookie in QNetworkCookie.parseCookies(base64.b64decode(entry["raw"])):
+                if not self.keepable(cookie):
+                    continue
+                origin = QUrl(f"https://{cookie.domain().lstrip('.')}{cookie.path() or '/'}")
+                if not cookie.domain().startswith("."):
+                    cookie.setDomain("")
+                self.unconfirmed.add((cookie_name(cookie), entry["domain"], cookie.path()))
+                store.setCookie(cookie, origin)
+        if self.unconfirmed:
+            self.log(f"seeding {len(self.unconfirmed)} kept cookie(s)")
+            QTimer.singleShot(SEED_TIMEOUT_MS, self.load_start_url)
+        else:
+            self.load_start_url()
+
+    def load_start_url(self) -> None:
+        if self.started:
+            return
+        self.started = True
+        for name, domain, _ in sorted(self.unconfirmed):
+            self.log(f"kept cookie not accepted: {name} @ {domain}")
+        self.window.page.load(QUrl(self.profile.start_url))
 
     def wanted(self, cookie) -> bool:
-        if bytes(cookie.name()).decode(errors="replace") != self.profile.cookie:
+        if cookie_name(cookie) != self.profile.cookie:
             return False
         domain = cookie.domain().lstrip(".").lower()
         want = self.profile.cookie_domain.lstrip(".").lower()
         return domain == want or domain.endswith("." + want)
 
+    def keepable(self, cookie) -> bool:
+        return not self.wanted(cookie) and keep_matches(self.profile.keep_cookies, cookie_name(cookie), cookie.domain())
+
     def cookie_added(self, cookie) -> None:
-        self.log(f"cookie set {bytes(cookie.name()).decode(errors='replace')} @ {cookie.domain()}")
+        key = cookie_key(cookie)
+        if not self.started and key in self.unconfirmed:
+            self.unconfirmed.discard(key)
+            if not self.unconfirmed:
+                self.load_start_url()
+        else:
+            self.log(f"cookie set {key[0]} @ {key[1]}")
+        if self.keepable(cookie):
+            self.kept[key] = QNetworkCookie(cookie)
         if not self.wanted(cookie):
             return
-        value = bytes(cookie.value()).decode(errors="replace")
         expires = None if cookie.isSessionCookie() else cookie.expirationDate().toSecsSinceEpoch()
-        self.pending = (value, expires)
+        self.pending = (cookie_value(cookie), expires)
         self.check_done()
 
     def cookie_removed(self, cookie) -> None:
-        if self.wanted(cookie) and self.pending and self.pending[0] == bytes(cookie.value()).decode(errors="replace"):
+        key = cookie_key(cookie)
+        if key in self.kept and cookie_value(self.kept[key]) == cookie_value(cookie):
+            del self.kept[key]
+        if self.wanted(cookie) and self.pending and self.pending[0] == cookie_value(cookie):
             self.log("captured cookie removed again")
             self.pending = None
+
+    def keep_set(self) -> list[dict]:
+        entries = []
+        for (name, domain, path), cookie in sorted(self.kept.items()):
+            expires = None if cookie.isSessionCookie() else cookie.expirationDate().toSecsSinceEpoch()
+            raw = bytes(cookie.toRawForm(QNetworkCookie.RawForm.Full))
+            entries.append({"name": name, "domain": domain, "path": path, "expires": expires,
+                            "raw": base64.b64encode(raw).decode()})
+        return entries
 
     def main_url_changed(self, url: QUrl) -> None:
         self.main_url = url
@@ -275,13 +335,13 @@ class Session:
         shiboken6.delete(self.qprofile)
 
 
-def run(profile: Profile, home: Path, verbose: bool) -> Outcome:
+def run(profile: Profile, keep: list[dict], verbose: bool) -> tuple[Outcome, list[dict]]:
     app = QApplication([sys.argv[0]])
     app.setApplicationName("tokenbooth")
     app.setDesktopFileName("tokenbooth")
-    session = Session(app, profile, home, verbose)
+    session = Session(app, profile, keep, verbose)
     session.start()
     app.exec()
-    outcome = session.outcome
+    outcome, kept = session.outcome, session.keep_set()
     session.dispose()
-    return outcome
+    return outcome, kept

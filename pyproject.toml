@@ -11,6 +11,9 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = ["PySide6-Essentials>=6.8", "PySide6-WebEngine"]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.scripts]
 tokenbooth = "tokenbooth.cli:main"
 

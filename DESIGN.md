@@ -69,7 +69,7 @@ The prototype runs as the user and keeps everything under one directory, `--home
 
 ```
 <home>/profiles/<name>.toml   what to open and what to capture
-<home>/sessions/<name>/       the browser profile, when persist_session = true
+<home>/keep/<name>.json       the kept cookies, see keep_cookies (0600)
 <home>/tokens/<name>.json     the cached token and its expiry (0600)
 ```
 
@@ -84,7 +84,7 @@ allowed_hosts   = ["gopro.com", "*.gopro.com"]
 cookie          = "gp_access_token"
 cookie_domain   = "gopro.com"
 done_url        = ""        # optional regex the page URL must match before the cookie counts
-persist_session = false     # keep the logged-in browser profile between runs
+keep_cookies    = []        # NAME@DOMAIN globs of cookies to carry into the next run
 user_agent      = ""        # override; default is the engine's own UA without "QtWebEngine"
 timeout         = 600
 ```
@@ -92,6 +92,15 @@ timeout         = 600
 Every key can also be given on the command line, so `tokenbooth get foo --url https://… --cookie x`
 works with no profile file. Without `allowed_hosts`, the start URL's host and its subdomains
 are allowed.
+
+Each run starts from an empty, off-the-record browser profile. `keep_cookies` names the
+cookies carried over: `NAME` is a glob on the cookie's name, `DOMAIN` a host glob on its
+domain without the leading dot, so `*@google.com` keeps every `.google.com` cookie and
+`__Host-GAPS@accounts.google.com` one host-only cookie. They are harvested as the run sets
+them and seeded into the next run's cookie store before its first navigation; a host-only
+cookie is seeded for its host, since a `__Host-` cookie given a domain is refused. The token
+cookie itself is never kept. `--keep` on the command line replaces the profile's list, and
+`tokenbooth keep-set NAME` lists what is kept, without values.
 
 ## Locking the window down
 
@@ -172,8 +181,9 @@ makes none of the claims below.
 ```
  unlocked shell (pidvault)                          tokenboothd (uid tokenbooth, sandboxed)
    tokenbooth get gopro ───── /run/tokenbooth/sock ─────► SO_PEERCRED + SO_PEERPIDFD:
-     │  + a Wayland connection fd (SCM_RIGHTS)              caller's uid, and is its shell unlocked?
-     │  + the state key, read from the vault                │
+     │  + a Wayland connection fd (SCM_RIGHTS)              caller's uid and pid
+     │  + a connection to /run/pidvault.sock (SCM_RIGHTS) ──► asks pidvault over it: is the
+     │  + the state key, read from the vault                caller's shell unlocked?
      │                                                       │ starts, with a clean environment
      │                                                       ▼
      │                                         booth (fresh DynamicUser uid, in-memory profile)
@@ -186,18 +196,53 @@ makes none of the claims below.
 ```
 
 - **The daemon** is small and long-lived (Rust, like pidvault). It owns the stored state and
-  profiles, authenticates callers by the kernel's credentials and a pidfd, and asks whether
-  the caller's shell is unlocked — through pidvault, or by sharing its session logic; that
-  interface is the main integration question. The client trusts the daemon only if it runs
-  as another uid behind a root-owned socket directory, as pidvault's client does.
+  profiles, authenticates callers by the kernel's credentials and a pidfd, and has pidvault
+  say whether the caller's shell is unlocked (see [Asking pidvault](#asking-pidvault)). The
+  client trusts the daemon only if it runs as another uid behind a root-owned socket
+  directory, as pidvault's client does.
 - **The booth** is QtWebEngine — a browser, the largest attack surface by far — so it gets
-  nothing it can keep. Each run is a new systemd unit with `DynamicUser=yes`: a uid that has
-  never existed before and owns nothing, no `/home`, a private `/tmp`, an off-the-record
+  nothing it can keep. Each run is an instance of a socket-activated unit with `DynamicUser=yes`
+  (`Accept=yes`, on a socket only the daemon can connect to): a uid that has never existed
+  before and owns nothing, no `/home` (`ProtectHome=yes`; `DynamicUser=` alone leaves it
+  listable), a private `/tmp`, an off-the-record
   browser profile held in memory, and a clean environment, so no `LD_PRELOAD`, `QT_*`,
   `PYTHON*` or `QTWEBENGINE_*` reaches it from the caller. It exits when the login completes
   or is cancelled, and everything it wrote goes with its uid.
 - **The code is root-owned** under `/usr`, from a package, never a virtualenv in a home
   directory that A1 can rewrite.
+
+### Asking pidvault
+
+pidvault decides whether a process is in an unlocked shell for the process at the other end
+of its control socket: on a `status` request it takes the connection's `SO_PEERCRED` pid and
+walks its parents to a live, unexpired unlocked shell, reporting `unlocked_by` per vault.
+`pidvault status` run by the daemon would describe the daemon, and one run by the client is
+a claim by a process A1 can impersonate. So the question is asked over a connection the
+caller opened:
+
+1. The client connects to `/run/pidvault.sock` and passes that connection, with its request,
+   to tokenboothd.
+2. tokenboothd checks that the passed socket's peer is the `pidvault` uid, so the reply is
+   pidvault's; that its `SO_PEERCRED` pid is the pid of the client's own connection to
+   tokenboothd; then sends `{"op":"status"}` on it and reads the reply.
+3. The profile's vault (`vault`, default `default`) must show `unlocked_by`.
+4. Afterwards the client's pidfd, taken by `SO_PEERPIDFD` on its connection to tokenboothd,
+   must not have exited. While the client lives its pid cannot be reused, so the process
+   pidvault judged was the client and not whatever took over the pid of an A1 that opened a
+   connection, passed it on and exited.
+
+A1 cannot do better: a connection it opens carries its own pid, and a socket cannot be
+reopened through `/proc/<pid>/fd`, so it cannot borrow one from an unlocked shell. The check is
+pidvault's own, live: it ends when the shell locks, exits or its unlock expires.
+
+pidvault 0.6 documents this use of `status` as a contract for other programs ("Asking
+pidvault from another program" in its security design) and itself holds the control-socket
+peer by pidfd, refusing once the process that opened the connection has exited (its claim
+C8), so step 4 is a second line of defence. tokenbooth therefore needs pidvault 0.6 or later,
+and Linux 6.5 or later for `SO_PEERPIDFD`.
+
+The state key in the vault is still needed, to encrypt the keep-set (T2), not to prove who is
+asking.
 
 ### State that survives a run
 
@@ -250,14 +295,20 @@ to the display.
 - **GPU:** logind grants `/dev/dri` to the seat's user only, so the booth renders in software.
   Login pages do not mind.
 - **Chromium's sandbox** needs user namespaces, which Ubuntu 24.04+ allows only to binaries
-  with an AppArmor profile saying so; the booth needs one, as Chrome has.
+  with an AppArmor profile saying so. The namespaces are created by the browser process — the
+  booth's interpreter, not `QtWebEngineProcess` — so Ubuntu's `QtWebEngineProcess` profile does
+  not help. The booth runs from an executable of its own, `/usr/lib/tokenbooth/booth` (a copy
+  of the interpreter or a launcher; not a symlink, since AppArmor attaches by the resolved
+  path), with a profile that grants `userns` to that path alone. Without it, QtWebEngine
+  carries on with seccomp only.
 - **Security keys** (`/dev/hidraw`) are likewise the seat user's; passkeys need a way through.
 
 ### Claims
 
 - **T1. Outside an unlocked shell, the owner's processes can neither get a token nor open a
-  booth.** The daemon checks the caller's uid and shell on every request, holding the peer by
-  pidfd so a reused pid or a passed-on connection is refused. Opening a booth is gated too: a
+  booth.** The daemon checks the caller's uid on every request and has pidvault check its
+  shell over a connection the caller opened, holding the peer by pidfd so a reused pid or a
+  passed-on connection is refused. Opening a booth is gated too: a
   booth lends credibility to whatever page it shows.
 - **T2. No process of the owner can read a stored keep-set**, not even in an unlocked shell.
   The blob is the daemon's, the booth that decrypts it has a uid of its own, and the client
@@ -291,14 +342,16 @@ to the display.
 
 ### The prototype
 
-Runs as the user, from a virtualenv, so A1 can read and change everything it has. With
-`persist_session` it keeps a whole Chromium profile — including the identity provider's
-session — under `<home>/sessions/`, readable by any of the user's processes. Tokens leave on
-stdout. It does keep the measures that carry over: it refuses to start when
+Runs as the user, from a virtualenv, so A1 can read and change everything it has. Its
+keep-set is a plain file under `<home>/keep/`, readable by any of the user's processes; when
+it holds an identity provider's session cookies, so does that file. Tokens leave on stdout.
+It does keep the measures that carry over: it refuses to start when
 `QTWEBENGINE_REMOTE_DEBUGGING` is set, drops `QTWEBENGINE_CHROMIUM_FLAGS`, passes Qt no
 command-line arguments (any of these could open a debugging port onto the logged-in session),
-keeps the Chromium sandbox on, limits top-level navigation, and logs navigations without query
-or fragment and cookie names without values.
+limits top-level navigation, and logs navigations without query or fragment and cookie names
+without values. Its Chromium sandbox is only half on: renderers get seccomp, but AppArmor
+refuses the venv's interpreter the user namespaces the namespace layer needs (see
+[Showing the window as another user](#showing-the-window-as-another-user)).
 
 ## Passkeys and security keys
 
@@ -311,7 +364,10 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
 1. **GoPro works**, signing in with Google: the embedded window completes the login and
    captures `gp_access_token`, a 7-day cookie, so `tokenbooth get` answers from the cache for a week.
 2. **Google** refuses the embedded browser with a clean Chromium user agent ("This browser or
-   app may not be secure") and accepts it with a Firefox one, the same trick qutebrowser uses.
+   app may not be secure") and accepts it with a Firefox one, the same trick qutebrowser uses —
+   but only a current Firefox: claiming Firefox 140 when 158 was current got the same refusal,
+   from the old and the new code alike, and claiming 158 got through at once. The version is
+   counted from a known release in whole four-week cycles, so it never claims one not yet out.
    Phone-prompt 2-step verification works. After sign-in, Google bounces the top-level page
    through `accounts.youtube.com` and `accounts.google.<country>` (`SetSID`) to set cookies
    there. `--via google` / `via = ["google"]` bundles those hosts and the user agent.
@@ -320,6 +376,91 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
    that Google sees genuine Chrome.
 3. **Host globs:** `*` matches exactly one DNS label and only a leading `*.` matches any depth,
    so `accounts.google.*` admits `accounts.google.no` but not `accounts.google.evil.com`.
+4. **A booth runs as a dynamic uid and draws through a passed connection** (spike S1,
+   `spikes/s1-booth-unit/`). A socket-activated `Accept=yes` template with `DynamicUser=yes`
+   receives the Wayland fd and the request over `SCM_RIGHTS`; with `WAYLAND_SOCKET` set and
+   `WAYLAND_DISPLAY`/`DISPLAY` removed, Qt draws through it alone and loads GoPro's login page.
+   The compositor sees a client of the owner's uid; the booth cannot list the owner's
+   `$XDG_RUNTIME_DIR`, and its environment holds only what the unit sets and systemd's own
+   variables. Rendering is software (`/dev/dri` is denied), about 400 MB at peak, with no D-Bus.
+5. **Chromium's full sandbox runs in that unit** (spike S2, `spikes/s2-sandbox/`) once the
+   interpreter is a copy at its own path with an AppArmor profile granting `userns`: the
+   sandboxed zygote and the renderers get PID namespaces of their own, and the renderers a
+   seccomp filter of Chromium's on top of systemd's. With the system interpreter the user
+   namespace is moved into `unprivileged_userns`, `CAP_SYS_ADMIN` is denied, and only seccomp
+   remains — as in the prototype.
+6. **Google, kept cookies** (spike S3, GoPro through Google, from an off-the-record profile):
+   - Seeded with no cookies, the login asks for the password and the second factor: nothing
+     but cookies makes Google remember the device.
+   - Keeping the 21 cookies set on `google.com` and its subdomains makes the next login an
+     account choice and the consent screen, with no password and no second factor: the
+     **stay signed in** level works.
+   - Google's refusals ("This browser or app may not be secure", "Could not sign you in")
+     are judged per attempt. After several sign-ins in an hour, a cookie-less login that had
+     gone straight through earlier was refused, and **Try again** (`accounts.google.com/restart`,
+     already an allowed host) then led on to the password. A single refusal therefore says
+     nothing about a keep-set; each candidate needs a retry before it is ruled out.
+   - Keeping only the six cookies outside the session (`ACCOUNT_CHOOSER`, `NID`, `OTZ`,
+     `SMSV`, `__Host-GAPS`, `__Secure-ENID`) offered the account and was then refused, without
+     a retry; whether **remember the device** can be split from the session is open.
 
 Still open: Entra and GitHub; whether the saved session makes the next login a single click;
 then the agent and how the commands should look.
+
+## Implementation plan
+
+From the prototype to the [security model](#security-model), in steps that each end in
+something that runs. Steps 1 and 3 can proceed in parallel once the booth's request format
+(1.3) is fixed; the daemon is built against a stub booth until then.
+
+### Spikes first
+
+Each of these could change the plan, so each is settled before the code that depends on it.
+
+| | Question | Settled when |
+|---|---|---|
+| S1 | Can a booth unit receive the Wayland fd? `systemd-run` cannot hand a transient unit an arbitrary fd. Candidate: a socket-activated `tokenbooth-booth@.service` with `Accept=yes` and `DynamicUser=yes`, on a socket only the tokenbooth uid can connect to; the daemon connects and sends the Wayland fd and the request over `SCM_RIGHTS`, and the booth sets `WAYLAND_SOCKET` before Qt starts. | Settled: yes ([shown](#what-the-prototype-has-shown), 4) |
+| S2 | Does Chromium's sandbox run under that unit, with an AppArmor profile allowing user namespaces, and does software rendering suffice? | Settled: yes, with an interpreter of the booth's own ([shown](#what-the-prototype-has-shown), 5) |
+| S3 | Which Google cookies remember the device without keeping the session, and does `setCookie` into an off-the-record profile before the first navigation make the next login skip 2-step verification? | A keep-set for each of the three levels, or the finding that remember-the-device cannot be split off |
+| S4 | Does the pidvault check in [Asking pidvault](#asking-pidvault) hold, including the pid-reuse case? | A test passes a connection on and exits, and is refused |
+
+### Steps
+
+| Step | What | Done when |
+|---|---|---|
+| 1 | **The booth on its own**, still run as the user | |
+| 1.1 | Off-the-record profile only; `persist_session` and `<home>/sessions` go | GoPro login works with no files written but the token |
+| 1.2 | Keep-set in through `setCookie`, out through `cookieAdded`, filtered by `keep_cookies` | S3 answered with the booth itself |
+| 1.3 | Framed request and response on an fd instead of argv, files and stdout | The format is written down and both ends of the tests use it |
+| 1.4 | Refuses to start without Wayland, so never on X11 | |
+| 1.5 | The current CLI becomes a thin wrapper around the booth | `tokenbooth get gopro` works as before |
+| 2 | **The booth as a dynamic uid** (S1, S2) | Step 1's booth runs as `tokenbooth-booth@` |
+| 3 | **Daemon and client**, in Rust | |
+| 3.1 | Socket, `SO_PEERCRED` and `SO_PEERPIDFD`, state under `/var/lib/tokenbooth/<uid>/` | |
+| 3.2 | The pidvault check (S4); profiles change only through checked requests | |
+| 3.3 | Keep-set encrypted with the key from the vault; the token cache | |
+| 3.4 | Token delivery: over the socket, into a vault file, on stdout | |
+| 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory | |
+| 4 | **Packaging**: `.deb`, sysusers, the socket and `DynamicUser` template units with `ProtectHome=yes`, the booth executable `/usr/lib/tokenbooth/booth` and its AppArmor profile, PySide6 pinned with hashes under `/usr/lib/tokenbooth` | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
+| 5 | **pidvault**: `status` and `unlocked_by` documented as a contract with a test; the control-socket peer held by pidfd | |
+| 6 | **mushcam** reads the token from a vault file or through a small socket library | `mushcam` no longer asks for a pasted cookie |
+
+### Testing
+
+| | Level | How |
+|---|---|---|
+| 1 | Unit | |
+| 1.1 | | pytest: `host_matches`, profile validation, `via` expansion, the keep-set filter, the request format |
+| 1.2 | | `cargo test`: daemon messages, keep-set encryption round trip, every authorisation decision |
+| 2 | Booth against a fake site, no human | |
+| 2.1 | | A local HTTPS server whose test CA is in an NSS database under the test's own `$HOME`, so the booth needs no switch for certificate errors |
+| 2.2 | | The fake pages script themselves: submit the login, set the cookie, open a popup that talks to its opener, navigate to a host outside the allowlist, start a download, ask for the camera |
+| 2.3 | | Asserted: the token came out, blocked navigations were blocked, permissions refused, the keep-set holds exactly the named cookies |
+| 2.4 | | Run under a headless Weston, so the `WAYLAND_SOCKET` path is exercised too |
+| 3 | The claims, in a VM or a `systemd-nspawn` container with real systemd | |
+| 3.1 | T1 | Callers outside an unlocked shell, with a passed-on pidvault connection, and with a reused pid are refused |
+| 3.2 | T2 | A process of the owner, unlocked or not, cannot read the stored keep-set |
+| 3.3 | T3, T5 | From inside a booth: the owner's home, another booth's `/tmp` and the daemon's state are unreadable; `systemd-analyze security` on the booth unit stays under a set score |
+| 3.4 | T4 | `LD_PRELOAD`, `QT_*`, `QTWEBENGINE_*` and `PYTHON*` set on the caller do not reach the booth |
+| 3.5 | T6 | A second user gets the same refusal whether or not a profile of that name exists |
+| 4 | Real logins, by hand | GoPro through Google at each keep level, recording which cookies made the difference |

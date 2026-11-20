@@ -6,6 +6,7 @@ Exit status: 0 token printed, 1 window closed without a token, 2 usage error, 3 
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from tokenbooth import store
@@ -24,25 +25,34 @@ def profile_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--via", action="append", default=[], metavar="PROVIDER",
                    help="sign in through an identity provider: allow its hosts and adapt to it (known: google)")
     p.add_argument("--done-url", help="regex the page URL must match before the cookie counts")
-    p.add_argument("--persist", dest="persist_session", action="store_true", default=None,
-                   help="keep the browser session in <home>/sessions/NAME between runs")
-    p.add_argument("--no-persist", dest="persist_session", action="store_false")
+    p.add_argument("--keep", dest="keep_cookies", action="append", metavar="NAME@DOMAIN",
+                   help="keep matching cookies for the next run (globs, repeatable); replaces the profile's keep_cookies")
     p.add_argument("--user-agent", help="replace the user agent string")
     p.add_argument("--timeout", type=int, help="seconds before giving up (default 600, 0 = never)")
     p.add_argument("--json", action="store_true", help='print {"token": ..., "expires": ...} instead of the bare token')
 
 
+def common_options(p: argparse.ArgumentParser, suppress: bool) -> None:
+    p.add_argument("--home", type=Path, default=argparse.SUPPRESS if suppress else None,
+                   help="state directory (default: $TOKENBOOTH_HOME or ~/.local/share/tokenbooth)")
+    p.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS if suppress else False,
+                   help="log navigations and cookie names (never values) to stderr")
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="tokenbooth", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--home", type=Path, help="state directory (default: $TOKENBOOTH_HOME or ~/.local/share/tokenbooth)")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="log navigations and cookie names (never values) to stderr")
+    common_options(parser, suppress=False)
+    # SUPPRESS keeps a subcommand that was not given the option from resetting the top-level value
+    common = argparse.ArgumentParser(add_help=False)
+    common_options(common, suppress=True)
     sub = parser.add_subparsers(dest="command", required=True)
-    profile_options(sub.add_parser("get", help="print a cached token, or open the login window to get one"))
-    profile_options(sub.add_parser("login", help="always open the login window"))
-    forget = sub.add_parser("forget", help="delete the cached token and the saved browser session")
+    profile_options(sub.add_parser("get", parents=[common], help="print a cached token, or open the login window to get one"))
+    profile_options(sub.add_parser("login", parents=[common], help="always open the login window"))
+    forget = sub.add_parser("forget", parents=[common], help="delete the cached token and the kept cookies")
     forget.add_argument("name")
+    keep_set = sub.add_parser("keep-set", parents=[common], help="list the kept cookies (names, domains and expiry, never values)")
+    keep_set.add_argument("name")
     return parser.parse_args(argv)
 
 
@@ -61,10 +71,15 @@ def main(argv: list[str] | None = None) -> int:
             for path in store.forget(home, args.name):
                 print(f"removed {path}", file=sys.stderr)
             return EXIT_OK
+        if args.command == "keep-set":
+            for entry in store.load_keep(home, args.name):
+                expires = time.strftime("%Y-%m-%d %H:%M", time.localtime(entry["expires"])) if entry["expires"] else "session"
+                print(f"{entry['name']}@{entry['domain']}{entry['path']}\t{expires}")
+            return EXIT_OK
 
         overrides = {k: getattr(args, k) for k in (
             "start_url", "cookie", "cookie_domain", "done_url",
-            "persist_session", "user_agent", "timeout")}
+            "keep_cookies", "user_agent", "timeout")}
         profile = store.Profile.load(home, args.name, overrides, args.extra_hosts, args.via)
 
         if args.command == "get" and (token := store.cached_token(home, profile.name)):
@@ -72,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_OK
 
         from tokenbooth import browser
-        outcome = browser.run(profile, home, args.verbose)
+        outcome, kept = browser.run(profile, store.load_keep(home, profile.name), args.verbose)
     except store.UsageError as e:
         print(f"tokenbooth: {e}", file=sys.stderr)
         return EXIT_USAGE
@@ -80,6 +95,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"tokenbooth: {e}", file=sys.stderr)
         return EXIT_USAGE
 
+    if profile.keep_cookies:
+        store.save_keep(home, profile.name, kept)
+        if args.verbose:
+            print(f"tokenbooth: kept {len(kept)} cookie(s): "
+                  + " ".join(f"{e['name']}@{e['domain']}" for e in kept), file=sys.stderr)
     if outcome.token is None:
         print("tokenbooth: timed out" if outcome.timed_out else "tokenbooth: closed without a token", file=sys.stderr)
         return EXIT_TIMEOUT if outcome.timed_out else EXIT_CANCELLED
