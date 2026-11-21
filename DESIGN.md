@@ -270,9 +270,9 @@ pidvault 0.6 documents this use of `status` as a contract for other programs ("A
 pidvault from another program" in its security design) and itself holds the control-socket
 peer by pidfd, refusing once the process that opened the connection has exited (its claim
 C8), so step 4 is a second line of defence. tokenbooth therefore needs pidvault 0.6 or later,
-and Linux 6.5 or later for `SO_PEERPIDFD`. The contract's own advice, to check that the passed
-socket's peer is the `pidvault` account, cannot hold for pidvault's socket-activated
-installation, where the peer is systemd (pid 1, uid 0); hence the socket-path test in step 2.
+and Linux 6.5 or later for `SO_PEERPIDFD`. The contract has the asker check the passed socket's
+peer as step 2 does: pidvault is socket-activated, so the peer is systemd (pid 1, uid 0), and
+only the listener's bound address, `/run/pidvault.sock`, tells it apart.
 
 The state key in the vault is still needed, to encrypt the keep-set (T2), not to prove who is
 asking.
@@ -577,7 +577,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 3.4 | Token delivery: over the socket, into a vault file (`--to-vault`: `tokens/<profile>` in the profile's vault), on stdout | `tokenbooth get gopro --to-vault` leaves the token in the vault and prints nothing |
 | 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory; tests reach a daemon of their own uid through a variable only a debug build reads | A daemon running as the owner is refused before the key is sent |
 | 4 | **Packaging**: a `.deb` built with cargo-deb from `packaging/`: the binary, sysusers, the socket and `DynamicUser` template units, the booth's code under `/usr/lib/tokenbooth`; it depends on `google-chrome-stable` (P3, [S5](#spikes-first)), whose sandbox Ubuntu's AppArmor profile for Chrome already allows | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
-| 5 | **pidvault**: `status` and `unlocked_by` documented as a contract with a test; the control-socket peer held by pidfd | |
+| 5 | **pidvault**: `status` and `unlocked_by` documented as a contract with a test; the control-socket peer held by pidfd | pidvault 0.6 does both; its contract names the root peer bound at `/run/pidvault.sock` as the one to trust |
 | 6 | **mushcam** reads the token from a vault file or through a small socket library | `mushcam` no longer asks for a pasted cookie |
 
 ### Testing
