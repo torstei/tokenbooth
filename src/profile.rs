@@ -55,7 +55,7 @@ pub fn check_name(what: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn host_of(url: &str) -> Option<&str> {
+pub fn host_of(url: &str) -> Option<&str> {
     let rest = url.strip_prefix("https://")?;
     let authority = rest.split(['/', '?', '#']).next()?;
     if authority.contains('@') {

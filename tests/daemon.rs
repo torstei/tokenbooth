@@ -2,8 +2,8 @@
 //! pidvault whose answer each test chooses. The client runs as a child of the test process, so
 //! an answer naming the test process as the unlocked shell vouches for it.
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixListener;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
@@ -17,6 +17,10 @@ struct Setup {
     dir: tempfile::TempDir,
     daemon: Child,
     answer: Arc<Mutex<String>>,
+    /// Frames the fake booth sends back to each request.
+    booth_says: Arc<Mutex<Vec<serde_json::Value>>>,
+    /// Requests the fake booth received.
+    booth_heard: Arc<Mutex<Vec<serde_json::Value>>>,
 }
 
 impl Drop for Setup {
@@ -57,15 +61,34 @@ fn setup_as(pidvault_user: &str) -> Setup {
             let _ = (&stream).write_all(reply.as_bytes());
         }
     });
+    std::fs::create_dir_all(dir.path().join("mount/stored/default")).unwrap();
+    let compositor = UnixListener::bind(dir.path().join("wayland-0")).unwrap();
+    std::thread::spawn(move || for _ in compositor.incoming() {});
+    let booth_says = Arc::new(Mutex::new(Vec::new()));
+    let booth_heard = Arc::new(Mutex::new(Vec::new()));
+    let booth = UnixListener::bind(dir.path().join("booth.sock")).unwrap();
+    let (says, heard) = (Arc::clone(&booth_says), Arc::clone(&booth_heard));
+    std::thread::spawn(move || {
+        for stream in booth.incoming().flatten() {
+            if let Some(request) = read_frame(&stream) {
+                heard.lock().unwrap().push(request);
+                for frame in says.lock().unwrap().iter() {
+                    write_frame(&stream, frame);
+                }
+            }
+        }
+    });
     let daemon = Command::new(BIN)
         .args(["daemon", "--pidvault-user", pidvault_user, "--listen"])
         .arg(dir.path().join("sock"))
         .arg("--state")
         .arg(dir.path().join("state"))
+        .arg("--booth-socket")
+        .arg(dir.path().join("booth.sock"))
         .spawn()
         .unwrap();
     wait_for(&dir.path().join("sock"));
-    Setup { dir, daemon, answer }
+    Setup { dir, daemon, answer, booth_says, booth_heard }
 }
 
 fn setup() -> Setup {
@@ -77,6 +100,9 @@ impl Setup {
         let mut child = Command::new(BIN)
             .env("TOKENBOOTH_SOCKET", self.dir.path().join("sock"))
             .env("PIDVAULT_SOCKET", self.dir.path().join("pidvault.sock"))
+            .env("PIDVAULT_MOUNT", self.dir.path().join("mount"))
+            .env("XDG_RUNTIME_DIR", self.dir.path())
+            .env("WAYLAND_DISPLAY", "wayland-0")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -102,6 +128,48 @@ impl Setup {
     fn answer(&self, answer: String) {
         *self.answer.lock().unwrap() = answer;
     }
+
+    fn booth_says(&self, frames: Vec<serde_json::Value>) {
+        *self.booth_says.lock().unwrap() = frames;
+    }
+
+    fn booth_heard(&self) -> Vec<serde_json::Value> {
+        self.booth_heard.lock().unwrap().clone()
+    }
+
+    fn uid_dir(&self) -> std::path::PathBuf {
+        // SAFETY: getuid has no preconditions
+        self.dir.path().join("state").join(unsafe { libc::getuid() }.to_string())
+    }
+}
+
+/// One frame read plainly: a descriptor passed with it is discarded by the kernel.
+fn read_frame(mut stream: &UnixStream) -> Option<serde_json::Value> {
+    let mut header = [0u8; 4];
+    stream.read_exact(&mut header).ok()?;
+    let mut body = vec![0u8; u32::from_be_bytes(header) as usize];
+    stream.read_exact(&mut body).ok()?;
+    serde_json::from_slice(&body).ok()
+}
+
+fn write_frame(mut stream: &UnixStream, frame: &serde_json::Value) {
+    let body = serde_json::to_vec(frame).unwrap();
+    let _ = stream.write_all(&(body.len() as u32).to_be_bytes());
+    let _ = stream.write_all(&body);
+}
+
+fn in_an_hour() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() + 3600.0
+}
+
+const KEPT: &str = "start_url = \"https://gopro.com/login\"\ncookie = \"gp_access_token\"\nvia = [\"google\"]\nkeep_cookies = [\"*@google.com\"]\n";
+
+fn sid() -> serde_json::Value {
+    serde_json::json!({"name": "SID", "domain": ".google.com", "path": "/", "expires": null, "raw": "e30="})
+}
+
+fn token_result(token: &str) -> serde_json::Value {
+    serde_json::json!({"type": "result", "outcome": "token", "token": token, "expires": in_an_hour(), "keep": [sid()]})
 }
 
 #[test]
@@ -178,4 +246,109 @@ fn a_profile_request_without_a_pidvault_connection_is_refused() {
     let mut reply = Vec::new();
     std::io::Read::read_to_end(&mut &stream, &mut reply).unwrap();
     assert!(String::from_utf8_lossy(&reply).contains("a connection to pidvault"));
+}
+
+#[test]
+fn get_runs_a_booth_once_then_answers_from_the_sealed_state() {
+    let s = setup();
+    s.ok(&["profile", "set", "gopro", "-"], KEPT);
+    s.booth_says(vec![serde_json::json!({"type": "log", "text": "navigate https://gopro.com/login"}), token_result("tok-1")]);
+    let output = s.run(&["get", "-v", "gopro"], "");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "tok-1\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("navigate https://gopro.com/login"));
+    assert_eq!(s.ok(&["get", "gopro"], ""), "tok-1\n");
+    let heard = s.booth_heard();
+    assert_eq!(heard.len(), 1, "the second get should not have opened a booth");
+    assert_eq!(heard[0]["profile"]["name"], "gopro");
+    assert_eq!(heard[0]["profile"]["cookie_domain"], "gopro.com");
+    assert_eq!(heard[0]["keep"], serde_json::json!([]));
+
+    use std::os::unix::fs::PermissionsExt;
+    let key = s.dir.path().join("mount/stored/default/tokenbooth/gopro.key");
+    assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
+    let blob = std::fs::read(s.uid_dir().join("sealed/gopro")).unwrap();
+    assert!(!String::from_utf8_lossy(&blob).contains("tok-1"));
+    assert!(!String::from_utf8_lossy(&blob).contains("SID"));
+}
+
+#[test]
+fn login_seeds_the_booth_with_what_the_last_run_kept() {
+    let s = setup();
+    s.ok(&["profile", "set", "gopro", "-"], KEPT);
+    s.booth_says(vec![token_result("tok-1")]);
+    s.ok(&["get", "gopro"], "");
+    s.booth_says(vec![token_result("tok-2")]);
+    assert_eq!(s.ok(&["login", "gopro"], ""), "tok-2\n");
+    let heard = s.booth_heard();
+    assert_eq!(heard[1]["keep"], serde_json::json!([sid()]));
+    assert_eq!(s.ok(&["get", "gopro"], ""), "tok-2\n");
+}
+
+#[test]
+fn forget_and_a_replaced_key_both_start_afresh() {
+    let s = setup();
+    s.ok(&["profile", "set", "gopro", "-"], KEPT);
+    s.booth_says(vec![token_result("tok-1")]);
+    s.ok(&["get", "gopro"], "");
+    s.ok(&["forget", "gopro"], "");
+    s.ok(&["get", "gopro"], "");
+    assert_eq!(s.booth_heard()[1]["keep"], serde_json::json!([]));
+
+    s.booth_says(vec![token_result("tok-2")]);
+    s.ok(&["login", "gopro"], "");
+    assert_eq!(s.booth_heard()[2]["keep"], serde_json::json!([sid()]));
+    std::fs::write(s.dir.path().join("mount/stored/default/tokenbooth/gopro.key"), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n").unwrap();
+    let output = s.run(&["get", "gopro"], "");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("starting afresh"));
+    assert_eq!(s.booth_heard()[3]["keep"], serde_json::json!([]));
+}
+
+#[test]
+fn each_outcome_has_its_exit_status() {
+    let s = setup();
+    s.ok(&["profile", "set", "gopro", "-"], KEPT);
+    for (result, status, says) in [
+        (serde_json::json!({"type": "result", "outcome": "cancelled", "token": null, "expires": null, "keep": []}), 1, "closed without a token"),
+        (serde_json::json!({"type": "result", "outcome": "timed_out", "token": null, "expires": null, "keep": []}), 3, "timed out"),
+        (serde_json::json!({"type": "result", "outcome": "refused", "token": null, "expires": null, "keep": [], "error": "no Wayland display"}), 2, "the booth refused: no Wayland display"),
+    ] {
+        s.booth_says(vec![result]);
+        let output = s.run(&["get", "gopro"], "");
+        assert_eq!(output.status.code(), Some(status));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(says), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+}
+
+#[test]
+fn without_a_display_only_a_cached_token_is_answered() {
+    let s = setup();
+    s.ok(&["profile", "set", "gopro", "-"], KEPT);
+    let headless = |args: &[&str]| {
+        Command::new(BIN)
+            .env("TOKENBOOTH_SOCKET", s.dir.path().join("sock"))
+            .env("PIDVAULT_SOCKET", s.dir.path().join("pidvault.sock"))
+            .env("PIDVAULT_MOUNT", s.dir.path().join("mount"))
+            .env_remove("WAYLAND_DISPLAY")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let output = headless(&["get", "gopro"]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no Wayland display"));
+    s.booth_says(vec![token_result("tok-1")]);
+    s.ok(&["get", "gopro"], "");
+    assert_eq!(String::from_utf8_lossy(&headless(&["get", "gopro"]).stdout), "tok-1\n");
+}
+
+#[test]
+fn a_profile_whose_vault_is_gone_can_be_deleted_but_one_in_a_locked_vault_cannot() {
+    let s = setup();
+    s.answer(r#"{"ok":true,"message":"","vaults":[{"name":"work","ephemeral":false,"unlocked_by":PID,"sessions":1}]}"#.replace("PID", &me().to_string()));
+    s.ok(&["profile", "set", "w", "-"], &format!("{GOPRO}vault = \"work\"\n"));
+    s.answer(r#"{"ok":true,"message":"","vaults":[{"name":"work","ephemeral":false,"unlocked_by":null,"sessions":0}]}"#.into());
+    assert!(s.refused(&["profile", "delete", "w"], "").contains("not unlocked"));
+    s.answer(r#"{"ok":true,"message":"","vaults":[]}"#.into());
+    s.ok(&["profile", "delete", "w"], "");
 }

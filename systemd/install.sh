@@ -1,12 +1,10 @@
 #!/bin/sh
 # Installs or removes the daemon and the booth units. Run with sudo, after
 # `cargo build --release` as yourself. The daemon is copied to /usr/local/bin, root-owned; the
-# booth's code is served read-only from this checkout. The booth socket belongs to the user
-# running sudo.
+# booth's code is served read-only from this checkout. Only the daemon may start booths.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/.." && pwd)
-owner=${SUDO_USER:?run with sudo from the desktop user}
 binary="$repo/target/release/tokenbooth"
 
 case "${1:-install}" in
@@ -16,10 +14,11 @@ install)
     systemd-sysusers /etc/sysusers.d/tokenbooth.conf
     install -m 0755 "$binary" /usr/local/bin/tokenbooth
     install -m 0644 "$here/tokenbooth.socket" "$here/tokenbooth.service" /etc/systemd/system/
-    sed "s|@OWNER@|$owner|" "$here/tokenbooth-booth.socket" > /etc/systemd/system/tokenbooth-booth.socket
+    install -m 0644 "$here/tokenbooth-booth.socket" /etc/systemd/system/
     sed "s|@REPO@|$repo|" "$here/tokenbooth-booth@.service" > /etc/systemd/system/tokenbooth-booth@.service
     systemctl daemon-reload
-    systemctl enable --now tokenbooth-booth.socket tokenbooth.socket
+    systemctl enable tokenbooth-booth.socket tokenbooth.socket
+    systemctl restart tokenbooth-booth.socket tokenbooth.socket
     systemctl try-restart tokenbooth.service
     ;;
 remove)

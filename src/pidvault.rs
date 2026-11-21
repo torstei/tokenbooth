@@ -8,7 +8,7 @@
 //! account, or, socket-activated, systemd as root. A root listener counts only bound at
 //! pidvault's socket path, a name only root can give it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
@@ -54,13 +54,20 @@ impl Pidvault {
 }
 
 /// The caller's stored vaults that pidvault has unlocked for it, by name, with the shell
-/// that unlocked each.
+/// that unlocked each; and the names of all the caller's stored vaults.
 #[derive(Debug, Default)]
-pub struct Unlocked(pub BTreeMap<String, u32>);
+pub struct Unlocked {
+    pub unlocked: BTreeMap<String, u32>,
+    pub existing: BTreeSet<String>,
+}
 
 impl Unlocked {
+    pub fn contains(&self, vault: &str) -> bool {
+        self.unlocked.contains_key(vault)
+    }
+
     pub fn require(&self, vault: &str) -> Result<()> {
-        if !self.0.contains_key(vault) {
+        if !self.contains(vault) {
             bail!("the vault {vault:?} is not unlocked in your shell: run `pidvault unlock {vault}` there");
         }
         Ok(())
@@ -89,14 +96,15 @@ pub fn ask(connection: OwnedFd, caller: PeerCred, pidvault: &Pidvault) -> Result
     }
     let mut unlocked = Unlocked::default();
     for vault in reply.vaults {
-        let Some(shell) = vault.unlocked_by else { continue };
         if vault.ephemeral {
             continue;
         }
+        unlocked.existing.insert(vault.name.clone());
+        let Some(shell) = vault.unlocked_by else { continue };
         // pidvault answered for whoever opened the connection; it vouches for this caller
         // only if the caller is in that same unlocked shell
         if procs::descends_from(caller.pid, shell) && procs::real_uid_of(shell) == Some(caller.uid) {
-            unlocked.0.insert(vault.name, shell);
+            unlocked.unlocked.insert(vault.name, shell);
         }
     }
     Ok(unlocked)

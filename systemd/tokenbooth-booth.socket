@@ -4,7 +4,7 @@ Description=tokenbooth booth requests
 [Socket]
 ListenStream=/run/tokenbooth/booth.sock
 Accept=yes
-SocketUser=@OWNER@
+SocketUser=tokenbooth
 SocketMode=0600
 DirectoryMode=0755
 
