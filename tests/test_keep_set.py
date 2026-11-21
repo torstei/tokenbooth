@@ -51,7 +51,7 @@ def main() -> None:
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
-    from tokenbooth import browser
+    from tokenbooth.engines import qt as browser
     from tokenbooth.store import Profile
 
     app = QApplication([sys.argv[0]])

@@ -57,10 +57,13 @@ is all the API needs. Today `mushcam gopro-login` asks you to paste it from deve
    timeout              → exit 3
 ```
 
-Python + PySide6 (QtWebEngine, i.e. Chromium) for the prototype. The pip wheels bundle a
-current Qt, so client-hint control and WebAuthn are available. From 6.12, QtWebEngine is its own
-wheel, `PySide6-WebEngine`, no longer part of `PySide6-Addons`. Which engine a package uses is
-open; see [Packaging the engine](#packaging-the-engine).
+The booth is Python. By default it drives Google Chrome, an `--app` window controlled over
+`--remote-debugging-pipe` (`tokenbooth/engines/chrome.py`); see
+[Packaging the engine](#packaging-the-engine). The frame and host strip drawn above are the Qt
+engine's (`--engine qt`, `tokenbooth/engines/qt.py`), QtWebEngine embedded through PySide6;
+Chrome's app window has neither. For Qt, the pip wheels bundle a current Qt, so client-hint
+control and WebAuthn are available; from 6.12, QtWebEngine is its own wheel,
+`PySide6-WebEngine`, no longer part of `PySide6-Addons`.
 
 ## Home directory (prototype)
 
@@ -85,7 +88,7 @@ cookie          = "gp_access_token"
 cookie_domain   = "gopro.com"
 done_url        = ""        # optional regex the page URL must match before the cookie counts
 keep_cookies    = []        # NAME@DOMAIN globs of cookies to carry into the next run
-user_agent      = ""        # override; default is the engine's own UA without "QtWebEngine"
+user_agent      = ""        # override; default is the engine's own (Qt's without "QtWebEngine")
 timeout         = 600
 ```
 
@@ -94,7 +97,8 @@ works with no profile file. Without `allowed_hosts`, the start URL's host and it
 are allowed.
 
 `tokenbooth discover NAME --url … [--via …]` finds the cookie for a new site. You sign in by
-hand and press **I'm logged in** (Cancel or closing the window suggests nothing); it lists the cookies on the start URL's site (the host without
+hand and close the window (with Qt, press **I'm logged in**; there, Cancel or closing the window
+suggests nothing); it lists the cookies on the start URL's site (the host without
 `www.`, and without its first label when three or more remain) in the order they appeared,
 and prints a profile using the likeliest. A candidate is a cookie whose name first appeared
 after the run left the start page and that is still set at the end, so a session id that
@@ -128,15 +132,17 @@ Embedding means nothing browser-like exists unless it is built:
 
 | Mode | How | For |
 |---|---|---|
-| `cookie` | `QWebEngineCookieStore.cookieAdded`, which includes HttpOnly cookies | session cookies (GoPro) — **prototype** |
+| `cookie` | Chrome: `Storage.getCookies`, polled; Qt: `QWebEngineCookieStore.cookieAdded`; both include HttpOnly cookies | session cookies (GoPro) — **prototype** |
 | `localstorage` | `runJavaScript` in the right origin once the login is done | SPAs keeping a JWT in storage (MSAL.js, Auth0) |
 | `header` | a script injected at document creation wraps `fetch`/XHR and reports `Authorization: Bearer …` | APIs where the token only travels in requests |
 | `oauth` | a real OAuth client with PKCE; the redirect to `http://127.0.0.1/cb` is caught in `acceptNavigationRequest` and the code exchanged directly | services that let you register a client |
 
 ## The user agent and embedded-browser blocks
 
-The user agent is ours to set. QtWebEngine's default contains `QtWebEngine/x.y`; the prototype
-removes it and otherwise reports the engine's real Chromium version. The rest of the problem:
+Google Chrome needs none of this ([shown](#what-the-prototype-has-shown), 9); it is the Qt
+engine's problem. The user agent is ours to set. QtWebEngine's default contains
+`QtWebEngine/x.y`; the booth removes it and otherwise reports the engine's real Chromium
+version. The rest of the problem:
 
 - **Client hints.** `Sec-CH-UA` and `navigator.userAgentData` must agree with the string
   (`QWebEngineClientHints`, Qt 6.8+). With PySide6 6.12 (Chromium 140) they already report
@@ -215,7 +221,7 @@ makes none of the claims below.
   say whether the caller's shell is unlocked (see [Asking pidvault](#asking-pidvault)). The
   client trusts the daemon only if it runs as another uid behind a root-owned socket
   directory, as pidvault's client does.
-- **The booth** is QtWebEngine — a browser, the largest attack surface by far — so it gets
+- **The booth** is a browser, Google Chrome — the largest attack surface by far — so it gets
   nothing it can keep. Each run is an instance of a socket-activated unit with `DynamicUser=yes`
   (`Accept=yes`, on a socket only the daemon can connect to): a uid that has never existed
   before and owns nothing, no `/home` (`ProtectHome=yes`; `DynamicUser=` alone leaves it
@@ -360,12 +366,17 @@ to the display.
 Runs as the user, from a virtualenv, so A1 can read and change everything it has. Its
 keep-set is a plain file under `<home>/keep/`, readable by any of the user's processes; when
 it holds an identity provider's session cookies, so does that file. Tokens leave on stdout.
-It does keep the measures that carry over: it refuses to start when
-`QTWEBENGINE_REMOTE_DEBUGGING` is set, drops `QTWEBENGINE_CHROMIUM_FLAGS`, passes Qt no
-command-line arguments (any of these could open a debugging port onto the logged-in session),
-draws only through Wayland, limits top-level navigation, and logs navigations without query
-or fragment and cookie names without values. Its Chromium sandbox is only half on: renderers get seccomp, but AppArmor
-refuses the venv's interpreter the user namespaces the namespace layer needs (see
+It does keep the measures that carry over. The booth is a child process spoken to in the
+[booth protocol](docs/booth-protocol.md), draws only through Wayland, limits top-level
+navigation, redirects included, and logs navigations without query or fragment and cookie
+names without values. Chrome is controlled only over its pipe, never a port, and starts with an
+environment of its own: its temporary profile as `HOME` and `XDG_RUNTIME_DIR`, so neither the
+owner's certificate store under `~/.pki` nor the owner's D-Bus is reached. Its sandbox is fully
+on, through Ubuntu's AppArmor profile for Chrome. The Qt engine refuses to start when
+`QTWEBENGINE_REMOTE_DEBUGGING` is set, drops `QTWEBENGINE_CHROMIUM_FLAGS` and passes Qt no
+command-line arguments (any of these could open a debugging port onto the logged-in session);
+its Chromium sandbox is only half on: renderers get seccomp, but AppArmor refuses the venv's
+interpreter the user namespaces the namespace layer needs (see
 [Showing the window as another user](#showing-the-window-as-another-user)).
 
 ## Passkeys and security keys
@@ -512,8 +523,9 @@ would bind the owner's own Chrome as well; what a policy would set goes into the
 profile's `Preferences` instead, as `signin.allowed_on_next_startup` does. The booth unit hides
 Chrome's Qt shim, and the booth starts Chrome with `--disable-blink-features=AutomationControlled`
 ([shown](#what-the-prototype-has-shown), 9). Qt WebEngine (P1 or a venv) stays
-the engine for development and experiments. Only `browser.py` knows which engine runs; profiles,
-the keep-set and discovery do not. P3 adds Google to [A5](#adversaries).
+the engine for development and experiments. Only the modules under `tokenbooth/engines/` know
+which engine runs; profiles, the keep-set and discovery do not, and the booth protocol carries
+no engine. P3 adds Google to [A5](#adversaries).
 
 ### Spikes first
 

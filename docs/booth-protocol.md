@@ -2,7 +2,8 @@
 
 How a caller asks a booth for one login. The caller is the `tokenbooth` command today and
 `tokenboothd` later ([DESIGN.md](../DESIGN.md#components)); the booth is
-`python -m tokenbooth.booth [FD]`. Implemented in `tokenbooth/protocol.py` (both ends) and
+`python -m tokenbooth.booth [--engine chrome|qt] [FD]`. The engine is the booth's choice, made
+where it is started; nothing in the protocol names it. Implemented in `tokenbooth/protocol.py` (both ends) and
 `tokenbooth/booth.py` (the booth's).
 
 ## Connection
@@ -44,7 +45,7 @@ nothing else.
 |---|---|---|
 | `type` | `"request"` | |
 | `version` | `1` | |
-| `mode` | `"login"` or `"discover"` | `discover` waits for "I'm logged in" and reports cookies instead of capturing one |
+| `mode` | `"login"` or `"discover"` | `discover` waits for the window to be closed (Qt: "I'm logged in") and reports cookies instead of capturing one |
 | `log` | boolean | send `log` events |
 | `profile` | object | below |
 | `keep` | array of keep entries | the keep-set to seed before the first navigation |
@@ -69,7 +70,7 @@ A keep entry:
 |---|---|---|
 | `name`, `domain`, `path` | string | the cookie's; `domain` with its leading dot when it has one |
 | `expires` | number or null | Unix time; null for a session cookie |
-| `raw` | string | the cookie as the booth's engine stores it, base64; opaque to the caller |
+| `raw` | string | the cookie as the booth's engine stores it, base64: for Chrome a DevTools `Network.Cookie` object in JSON, for Qt a `Set-Cookie` line; opaque to the caller |
 
 The caller stores keep entries and hands them back unchanged. It may read the other keys to list
 entries or drop expired ones, never `raw`. A booth ignores an entry whose `raw` it cannot read,
@@ -97,10 +98,10 @@ so a keep-set written by one engine is merely not seeded into another.
 | `outcome` | |
 |---|---|
 | `token` | the cookie appeared, after `done_url` if there is one |
-| `confirmed` | `discover`: "I'm logged in" was pressed |
-| `cancelled` | the window was closed, or the caller hung up |
+| `confirmed` | `discover`: the window was closed (Qt: "I'm logged in" was pressed) |
+| `cancelled` | `login`: the window was closed; either mode: the caller hung up (Qt: also Cancel or closing in `discover`) |
 | `timed_out` | `timeout` passed |
-| `refused` | the request was malformed, or the booth will not run, e.g. it has no Wayland display or a debugging port is requested in its environment |
+| `refused` | the request was malformed, or the booth will not run, e.g. it has no Wayland display, Chrome is missing or exited before opening its window, or a debugging port is requested in its environment |
 
 A `cookies` entry describes one cookie by `name`, `domain` and `path`:
 

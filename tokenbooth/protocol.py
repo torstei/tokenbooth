@@ -165,11 +165,12 @@ class Result:
 
 
 def run_booth(request: Request, on_log: Callable[[str], None] | None = None,
-              env: dict | None = None) -> Result:
+              env: dict | None = None, engine: str = "chrome") -> Result:
     """Start a booth as a child process, hand it the request and wait for its result. Closing
     our end, as an exception here does, makes the booth quit."""
     ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-    booth = subprocess.Popen([sys.executable, "-I", "-m", "tokenbooth.booth", str(theirs.fileno())],
+    booth = subprocess.Popen([sys.executable, "-I", "-m", "tokenbooth.booth", "--engine", engine,
+                              str(theirs.fileno())],
                              pass_fds=[theirs.fileno()], stdin=subprocess.DEVNULL,
                              stdout=subprocess.DEVNULL, env=env)
     theirs.close()

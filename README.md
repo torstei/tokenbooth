@@ -5,10 +5,13 @@ Prototype — see [DESIGN.md](DESIGN.md) for what it is meant to become.
 
 ## Setup
 
+The booth drives Google Chrome (`google-chrome-stable` from Google's apt repository, at
+`/opt/google/chrome/chrome`). `--engine qt` uses Qt WebEngine from the virtualenv instead.
+
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install -e '.[test]'
-.venv/bin/pytest                  # unit tests, and the cookie store offscreen
+.venv/bin/pip install -e '.[qt,test]'
+.venv/bin/pytest                  # unit tests, and both engines offscreen (Chrome headless)
 ```
 
 ## Use
@@ -24,11 +27,14 @@ python3 -m venv .venv
 .venv/bin/tokenbooth keep-set gopro       # list the kept cookies (never their values)
 ```
 
-Each run starts with an empty browser. `keep_cookies` in the profile, or `--keep NAME@DOMAIN`,
+Each run starts with an empty browser.
+Kept cookies are stored in the engine's own form, so after switching engines the first login is
+a full one. `keep_cookies` in the profile, or `--keep NAME@DOMAIN`,
 names cookies to carry into the next run, such as those that spare you 2-step verification.
 
-For a new site, let tokenbooth find the cookie: sign in by hand, press "I'm logged in",
-and it prints a profile using the cookie that appeared with the login.
+For a new site, let tokenbooth find the cookie: sign in by hand, close the window (with
+`--engine qt`, press "I'm logged in"), and it prints a profile using the cookie that appeared
+with the login. Ctrl-C gives up without one.
 
 ```sh
 .venv/bin/tokenbooth discover github --url https://github.com/login --via google > github.toml

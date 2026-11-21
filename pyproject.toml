@@ -9,13 +9,14 @@ description = "Log in to a site in a locked-down browser window and print the to
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-dependencies = ["PySide6-Essentials>=6.8", "PySide6-WebEngine"]
+dependencies = []
 
 [project.optional-dependencies]
+qt = ["PySide6-Essentials>=6.8", "PySide6-WebEngine"]
 test = ["pytest"]
 
 [project.scripts]
 tokenbooth = "tokenbooth.cli:main"
 
 [tool.setuptools]
-packages = ["tokenbooth"]
+packages = ["tokenbooth", "tokenbooth.engines"]

@@ -1,6 +1,8 @@
 """The booth: serves one request on the connected socket whose fd is its argument (default 3,
-where systemd puts an accepted connection), then exits. See docs/booth-protocol.md."""
+where systemd puts an accepted connection) with the engine `--engine` names, then exits.
+See docs/booth-protocol.md."""
 
+import argparse
 import os
 import socket
 import stat
@@ -9,12 +11,12 @@ from collections.abc import MutableMapping
 from dataclasses import asdict
 from pathlib import Path
 
-from tokenbooth import protocol
+from tokenbooth import engines, protocol
 from tokenbooth.protocol import ProtocolError, Request, Result
 from tokenbooth.store import UsageError
 
 
-def confine_display(environ: MutableMapping[str, str]) -> None:
+def confine_display(environ: MutableMapping[str, str]) -> bool:
     """Lets Qt draw only through Wayland: on X11 every client can read the keystrokes typed
     into the booth. `offscreen` draws nowhere and takes no input, and is what the tests use."""
     platform = environ.get("QT_QPA_PLATFORM", "wayland")
@@ -43,9 +45,10 @@ def confine_display(environ: MutableMapping[str, str]) -> None:
     environ["QT_QPA_PLATFORM"] = platform
     for name in ("DISPLAY", "XAUTHORITY"):
         environ.pop(name, None)
+    return platform == "offscreen"
 
 
-def serve(sock: socket.socket) -> int:
+def serve(sock: socket.socket, engine_name: str) -> int:
     try:
         frame = protocol.receive(sock)
         if frame is None:
@@ -65,8 +68,8 @@ def serve(sock: socket.socket) -> int:
             pass
 
     try:
-        confine_display(os.environ)
-        from tokenbooth import browser
+        offscreen = confine_display(os.environ)
+        engine = engines.load(engine_name)
     except (UsageError, ImportError) as e:
         reply(sock, Result("refused", error=str(e)))
         return 2
@@ -74,8 +77,8 @@ def serve(sock: socket.socket) -> int:
     from tokenbooth.discover import Recorder
     recorder = Recorder() if request.mode == "discover" else None
     try:
-        outcome, kept = browser.run(request.profile, request.keep, log if request.log else None, recorder,
-                                    hangup=sock.fileno())
+        outcome, kept = engine.run(request.profile, request.keep, log if request.log else None, recorder,
+                                   hangup=sock.fileno(), offscreen=offscreen)
     except UsageError as e:
         reply(sock, Result("refused", error=str(e)))
         return 2
@@ -102,10 +105,13 @@ def reply(sock: socket.socket, result: Result) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = sys.argv[1:] if argv is None else argv
-    sock = socket.socket(fileno=int(args[0]) if args else 3)
+    parser = argparse.ArgumentParser(prog="tokenbooth.booth", description=__doc__)
+    parser.add_argument("--engine", choices=engines.ENGINES, default="chrome")
+    parser.add_argument("fd", type=int, nargs="?", default=3)
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    sock = socket.socket(fileno=args.fd)
     try:
-        return serve(sock)
+        return serve(sock, args.engine)
     finally:
         sock.close()
 

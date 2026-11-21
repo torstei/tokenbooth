@@ -27,11 +27,11 @@ def firefox_ua(today: datetime.date | None = None) -> str:
 
 
 PROVIDERS = {
-    # Google refuses sign-in from an embedded Chromium that calls itself Chrome, but not from one
-    # calling itself Firefox; after sign-in it bounces the page through YouTube to set cookies there.
+    # Google refuses sign-in from Qt WebEngine calling itself Chrome, but not calling itself
+    # Firefox; after sign-in it bounces the page through YouTube to set cookies there.
     "google": {
         "hosts": ["accounts.google.*", "accounts.google.co.*", "accounts.google.com.*", "accounts.youtube.com"],
-        "user_agent": firefox_ua,
+        "qt_user_agent": firefox_ua,
     },
     # Entra accepts the embedded engine as it is; personal accounts go through login.live.com.
     "microsoft": {
@@ -96,7 +96,7 @@ class Profile:
 
     @classmethod
     def load(cls, home: Path, name: str, overrides: dict, extra_hosts: list[str] = (), via: list[str] = (),
-             require_cookie: bool = True) -> "Profile":
+             require_cookie: bool = True, engine: str = "chrome") -> "Profile":
         if not name or "/" in name or name.startswith("."):
             raise UsageError(f"bad profile name: {name!r}")
         path = home / "profiles" / f"{name}.toml"
@@ -125,8 +125,9 @@ class Profile:
             if provider not in PROVIDERS:
                 raise UsageError(f"unknown identity provider {provider!r} (known: {', '.join(PROVIDERS)})")
             values["allowed_hosts"] += PROVIDERS[provider]["hosts"]
-            if not values.get("user_agent") and "user_agent" in PROVIDERS[provider]:
-                values["user_agent"] = PROVIDERS[provider]["user_agent"]()
+            quirk = PROVIDERS[provider].get(f"{engine}_user_agent")
+            if not values.get("user_agent") and quirk:
+                values["user_agent"] = quirk()
         values.setdefault("cookie", "")
         values.setdefault("cookie_domain", base)
         values["keep_cookies"] = list(values.get("keep_cookies", []))

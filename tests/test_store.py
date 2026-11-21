@@ -85,9 +85,10 @@ def test_firefox_version_follows_the_release_cycle_and_never_runs_ahead():
     assert f"Firefox/{known}.0" in store.firefox_ua(since - 100 * day)
 
 
-def test_via_google_claims_a_current_firefox(tmp_path):
+def test_via_google_claims_a_current_firefox_on_qt_only(tmp_path):
     write_profile(tmp_path, 'start_url = "https://x.example/"\ncookie = "t"\nvia = ["google"]\n')
-    assert store.Profile.load(tmp_path, "p", {}).user_agent == store.firefox_ua()
+    assert store.Profile.load(tmp_path, "p", {}, engine="qt").user_agent == store.firefox_ua()
+    assert store.Profile.load(tmp_path, "p", {}, engine="chrome").user_agent == ""
 
 
 @pytest.mark.parametrize("argv", [

@@ -48,7 +48,7 @@ def main(user_agent: str) -> None:
     from PySide6.QtWebEngineCore import QWebEnginePage
     from PySide6.QtWidgets import QApplication
 
-    from tokenbooth import browser
+    from tokenbooth.engines import qt as browser
     from tokenbooth.store import Profile
 
     headers = {}

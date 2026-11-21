@@ -1,12 +1,12 @@
-"""The locked-down login window."""
+"""The booth's engine for development and experiments: Qt WebEngine, embedded."""
 
 import base64
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from tokenbooth.discover import Recorder
+from tokenbooth.engines import Outcome
 from tokenbooth.store import Profile, UsageError, host_matches, keep_matches
 
 
@@ -48,14 +48,6 @@ SEED_TIMEOUT_MS = 3000
 # Only Chromium-based browsers have client hints; a page that sees them next to another
 # browser's user agent sees a contradiction.
 HIDE_USER_AGENT_DATA = "delete Navigator.prototype.userAgentData;"
-
-
-@dataclass
-class Outcome:
-    token: str | None = None
-    expires: float | None = None
-    timed_out: bool = False
-    confirmed: bool = False
 
 
 def cookie_name(cookie) -> str:
@@ -260,7 +252,11 @@ class Session:
         self.window = self.open_window(popup=False)
         store = self.qprofile.cookieStore()
         for entry in self.seed:
-            for cookie in QNetworkCookie.parseCookies(base64.b64decode(entry["raw"])):
+            raw = base64.b64decode(entry["raw"])
+            if raw.startswith(b"{"):
+                self.log(f"kept cookie from another engine, not seeded: {entry['name']} @ {entry['domain']}")
+                continue
+            for cookie in QNetworkCookie.parseCookies(raw):
                 if not self.keepable(cookie):
                     continue
                 origin = QUrl(f"https://{cookie.domain().lstrip('.')}{cookie.path() or '/'}")
@@ -372,7 +368,8 @@ class Session:
 
 
 def run(profile: Profile, keep: list[dict], log: Callable[[str], None] | None = None,
-        recorder: Recorder | None = None, hangup: int | None = None) -> tuple[Outcome, list[dict]]:
+        recorder: Recorder | None = None, hangup: int | None = None,
+        offscreen: bool = False) -> tuple[Outcome, list[dict]]:
     """One login. When `hangup` becomes readable, the caller has gone and the run ends."""
     app = QApplication(["tokenbooth"])
     app.setApplicationName("tokenbooth")

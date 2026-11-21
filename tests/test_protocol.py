@@ -140,7 +140,8 @@ def offscreen() -> dict:
 
 def start_booth(env: dict) -> tuple[socket.socket, subprocess.Popen]:
     ours, theirs = pair()
-    booth = subprocess.Popen([sys.executable, "-I", "-m", "tokenbooth.booth", str(theirs.fileno())],
+    booth = subprocess.Popen([sys.executable, "-I", "-m", "tokenbooth.booth", "--engine", "qt",
+                              str(theirs.fileno())],
                              pass_fds=[theirs.fileno()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=env)
     theirs.close()
@@ -150,7 +151,7 @@ def start_booth(env: dict) -> tuple[socket.socket, subprocess.Popen]:
 def test_booth_times_out_and_returns_the_seeded_keep_set():
     logs = []
     result = protocol.run_booth(Request(mode="login", profile=profile(), keep=SEED, log=True), logs.append,
-                                env=offscreen())
+                                env=offscreen(), engine="qt")
     assert result.outcome == "timed_out"
     assert result.token is None
     assert {(e["name"], e["domain"]) for e in result.keep} == {("SID", ".google.com"),
@@ -160,7 +161,7 @@ def test_booth_times_out_and_returns_the_seeded_keep_set():
 
 def test_booth_in_discover_mode_reports_cookies_without_values():
     result = protocol.run_booth(Request(mode="discover", profile=profile(cookie=""), keep=SEED),
-                                env=offscreen())
+                                env=offscreen(), engine="qt")
     assert result.outcome == "timed_out"
     recorder = Recorder.from_cookies(result.cookies)
     assert {(s.name, s.domain) for s in recorder.cookies.values()} == {("SID", ".google.com"),

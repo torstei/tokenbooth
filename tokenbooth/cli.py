@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from tokenbooth import protocol, store
+from tokenbooth.engines import ENGINES
 from tokenbooth.discover import Recorder, describe, site_of, suggest_profile, tied
 
 EXIT_OK, EXIT_CANCELLED, EXIT_USAGE, EXIT_TIMEOUT = 0, 1, 2, 3
@@ -39,6 +40,8 @@ def common_options(p: argparse.ArgumentParser, suppress: bool) -> None:
                    help="state directory (default: $TOKENBOOTH_HOME or ~/.local/share/tokenbooth)")
     p.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS if suppress else False,
                    help="log navigations and cookie names (never values) to stderr")
+    p.add_argument("--engine", choices=ENGINES, default=argparse.SUPPRESS if suppress else "chrome",
+                   help="the browser the booth drives: Google Chrome (default) or Qt WebEngine")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -53,8 +56,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     profile_options(sub.add_parser("login", parents=[common], help="always open the login window"))
     profile_options(sub.add_parser(
         "discover", parents=[common],
-        help="sign in by hand and press \"I'm logged in\": lists the cookies that appeared with the"
-             " login and prints a profile using the likeliest one"))
+        help="sign in by hand, then close the window (Qt: press \"I'm logged in\"): lists the cookies"
+             " that appeared with the login and prints a profile using the likeliest one"))
     forget = sub.add_parser("forget", parents=[common], help="delete the cached token and the kept cookies")
     forget.add_argument("name")
     keep_set = sub.add_parser("keep-set", parents=[common], help="list the kept cookies (names, domains and expiry, never values)")
@@ -111,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             "keep_cookies", "user_agent", "timeout")}
         discovering = args.command == "discover"
         profile = store.Profile.load(home, args.name, overrides, args.extra_hosts, args.via,
-                                     require_cookie=not discovering)
+                                     require_cookie=not discovering, engine=args.engine)
 
         if args.command == "get" and (token := store.cached_token(home, profile.name)):
             emit(token, None, args.json)
@@ -120,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         request = protocol.Request(mode="discover" if discovering else "login", profile=profile,
                                    keep=store.load_keep(home, profile.name), log=args.verbose)
         result = protocol.run_booth(request, on_log=lambda text: print(f"tokenbooth: {text}", file=sys.stderr,
-                                                                       flush=True))
+                                                                       flush=True), engine=args.engine)
     except store.UsageError as e:
         print(f"tokenbooth: {e}", file=sys.stderr)
         return EXIT_USAGE
