@@ -114,10 +114,19 @@ fn main() -> ExitCode {
         Command::Forget { name } => forget(&cli, name).map(|()| ExitCode::SUCCESS),
         Command::Status => status(&cli).map(|()| ExitCode::SUCCESS),
         Command::Profile(command) => profile(&cli, command).map(|()| ExitCode::SUCCESS),
-        Command::Daemon { listen, state, pidvault_user, booth_socket } => {
-            run_daemon(listen.clone(), state.clone(), pidvault_user, &cli.pidvault_socket, booth_socket.clone())
-                .map(|()| ExitCode::SUCCESS)
-        }
+        Command::Daemon {
+            listen,
+            state,
+            pidvault_user,
+            booth_socket,
+        } => run_daemon(
+            listen.clone(),
+            state.clone(),
+            pidvault_user,
+            &cli.pidvault_socket,
+            booth_socket.clone(),
+        )
+        .map(|()| ExitCode::SUCCESS),
     };
     outcome.unwrap_or_else(|e| {
         eprintln!("tokenbooth: {e:#}");
@@ -132,9 +141,11 @@ fn run_daemon(
     pidvault_socket: &Path,
     booth_socket: PathBuf,
 ) -> Result<()> {
-    let pidvault_uid = procs::uid_of_user(pidvault_user).with_context(|| format!("no account {pidvault_user:?}"))?;
+    let pidvault_uid = procs::uid_of_user(pidvault_user)
+        .with_context(|| format!("no account {pidvault_user:?}"))?;
     let listener = match listen {
-        Some(path) => UnixListener::bind(&path).with_context(|| format!("cannot listen on {}", path.display()))?,
+        Some(path) => UnixListener::bind(&path)
+            .with_context(|| format!("cannot listen on {}", path.display()))?,
         None => {
             let mut fds = systemd::listen_fds()?;
             if fds.len() != 1 {
@@ -144,7 +155,14 @@ fn run_daemon(
         }
     };
     let pidvault = pidvault::Pidvault::new(pidvault_uid, pidvault_socket);
-    daemon::run(listener, daemon::Config { state, pidvault, booth_socket })
+    daemon::run(
+        listener,
+        daemon::Config {
+            state,
+            pidvault,
+            booth_socket,
+        },
+    )
 }
 
 /// Sends `request` with, when `pidvault` is set, a fresh connection to pidvault: the daemon
@@ -152,18 +170,25 @@ fn run_daemon(
 /// A connection to the daemon, refused unless it is the daemon (see trust.rs).
 fn connect_daemon(cli: &Cli) -> Result<UnixStream> {
     let socket = &cli.socket;
-    let stream = UnixStream::connect(socket).with_context(|| format!("cannot reach the daemon at {}", socket.display()))?;
-    trust::check(&stream).with_context(|| format!("refusing the daemon at {}", socket.display()))?;
+    let stream = UnixStream::connect(socket)
+        .with_context(|| format!("cannot reach the daemon at {}", socket.display()))?;
+    trust::check(&stream)
+        .with_context(|| format!("refusing the daemon at {}", socket.display()))?;
     Ok(stream)
 }
 
 fn call(cli: &Cli, request: &Value, pidvault: bool) -> Result<frame::Message> {
     let stream = connect_daemon(cli)?;
-    let vault = if pidvault { Some(connect_pidvault(&cli.pidvault_socket)?) } else { None };
+    let vault = if pidvault {
+        Some(connect_pidvault(&cli.pidvault_socket)?)
+    } else {
+        None
+    };
     let fds: Vec<_> = vault.iter().map(AsRawFd::as_raw_fd).collect();
     frame::send(&stream, request, &fds)?;
     drop(vault);
-    let (reply, _) = frame::receive(&stream)?.context("the daemon closed the connection without a reply")?;
+    let (reply, _) =
+        frame::receive(&stream)?.context("the daemon closed the connection without a reply")?;
     if reply["type"] == "error" {
         bail!("{}", reply["message"].as_str().unwrap_or("refused"));
     }
@@ -171,7 +196,8 @@ fn call(cli: &Cli, request: &Value, pidvault: bool) -> Result<frame::Message> {
 }
 
 fn connect_pidvault(path: &Path) -> Result<UnixStream> {
-    UnixStream::connect(path).with_context(|| format!("cannot reach pidvault at {}", path.display()))
+    UnixStream::connect(path)
+        .with_context(|| format!("cannot reach pidvault at {}", path.display()))
 }
 
 fn status(cli: &Cli) -> Result<()> {
@@ -196,7 +222,11 @@ fn profile(cli: &Cli, command: &ProfileCommand) -> Result<()> {
         ProfileCommand::List => {
             let reply = call(cli, &json!({"type": "profile-list"}), true)?;
             for entry in reply["profiles"].as_array().into_iter().flatten() {
-                println!("{}\t(vault {})", entry["name"].as_str().unwrap_or("?"), entry["vault"].as_str().unwrap_or("?"));
+                println!(
+                    "{}\t(vault {})",
+                    entry["name"].as_str().unwrap_or("?"),
+                    entry["vault"].as_str().unwrap_or("?")
+                );
             }
         }
         ProfileCommand::Show { name } => {
@@ -208,9 +238,14 @@ fn profile(cli: &Cli, command: &ProfileCommand) -> Result<()> {
             if file.as_os_str() == "-" {
                 std::io::stdin().read_to_string(&mut toml)?;
             } else {
-                toml = std::fs::read_to_string(file).with_context(|| format!("cannot read {}", file.display()))?;
+                toml = std::fs::read_to_string(file)
+                    .with_context(|| format!("cannot read {}", file.display()))?;
             }
-            call(cli, &json!({"type": "profile-set", "name": name, "toml": toml}), true)?;
+            call(
+                cli,
+                &json!({"type": "profile-set", "name": name, "toml": toml}),
+                true,
+            )?;
         }
         ProfileCommand::Delete { name } => {
             call(cli, &json!({"type": "profile-delete", "name": name}), true)?;
@@ -236,7 +271,10 @@ fn profile_key(cli: &Cli, vault: &str, name: &str) -> Result<zeroize::Zeroizing<
     profile::check_name("vault", vault)?;
     let root = cli.pidvault_mount.join("stored").join(vault);
     if !root.is_dir() {
-        bail!("the vault {vault:?} is not visible at {}: unlock it in this shell", root.display());
+        bail!(
+            "the vault {vault:?} is not visible at {}: unlock it in this shell",
+            root.display()
+        );
     }
     let dir = root.join("tokenbooth");
     let path = dir.join(format!("{name}.key"));
@@ -265,12 +303,23 @@ fn login(cli: &Cli, args: &LoginArgs, refresh: bool) -> Result<ExitCode> {
     let stream = connect_daemon(cli)?;
     let vault = connect_pidvault(&cli.pidvault_socket)?;
     let display = wayland_connection();
-    let fds: Vec<_> = [Some(vault.as_raw_fd()), display.as_ref().map(AsRawFd::as_raw_fd)].into_iter().flatten().collect();
-    frame::send(&stream, &json!({"type": "login", "name": args.name, "refresh": refresh, "log": args.verbose}), &fds)?;
+    let fds: Vec<_> = [
+        Some(vault.as_raw_fd()),
+        display.as_ref().map(AsRawFd::as_raw_fd),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    frame::send(
+        &stream,
+        &json!({"type": "login", "name": args.name, "refresh": refresh, "log": args.verbose}),
+        &fds,
+    )?;
     drop((vault, display));
     let mut vault_name = None;
     loop {
-        let (reply, _) = frame::receive(&stream)?.context("the daemon closed the connection without a result")?;
+        let (reply, _) = frame::receive(&stream)?
+            .context("the daemon closed the connection without a result")?;
         match reply["type"].as_str() {
             Some("need-key") => {
                 let vault = reply["vault"].as_str().unwrap_or_default().to_owned();
@@ -284,7 +333,9 @@ fn login(cli: &Cli, args: &LoginArgs, refresh: bool) -> Result<ExitCode> {
                 return Ok(match (reply["outcome"].as_str(), reply["token"].as_str()) {
                     (Some("token"), Some(token)) => {
                         if args.to_vault {
-                            let vault = vault_name.as_deref().context("the daemon never named the profile's vault")?;
+                            let vault = vault_name
+                                .as_deref()
+                                .context("the daemon never named the profile's vault")?;
                             let path = write_to_vault(cli, vault, &args.name, token)?;
                             eprintln!("tokenbooth: token written to {}", path.display());
                         } else if args.json {
@@ -405,8 +456,16 @@ mod tests {
             .into_iter()
             .flatten()
             .map(|entry| entry.unwrap())
-            .map(|entry| (entry.file_name().into_string().unwrap(), std::fs::read(entry.path()).unwrap()))
+            .map(|entry| {
+                (
+                    entry.file_name().into_string().unwrap(),
+                    std::fs::read(entry.path()).unwrap(),
+                )
+            })
             .collect();
-        assert!(packaged == pages, "packaging/man is stale; run TOKENBOOTH_WRITE_MAN=1 cargo test the_man_pages");
+        assert!(
+            packaged == pages,
+            "packaging/man is stale; run TOKENBOOTH_WRITE_MAN=1 cargo test the_man_pages"
+        );
     }
 }

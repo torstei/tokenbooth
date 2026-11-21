@@ -49,7 +49,10 @@ pub struct Pidvault {
 
 impl Pidvault {
     pub fn new(uid: u32, socket: &Path) -> Pidvault {
-        Pidvault { uid, socket: socket.to_owned() }
+        Pidvault {
+            uid,
+            socket: socket.to_owned(),
+        }
     }
 }
 
@@ -68,7 +71,9 @@ impl Unlocked {
 
     pub fn require(&self, vault: &str) -> Result<()> {
         if !self.contains(vault) {
-            bail!("the vault {vault:?} is not unlocked in your shell: run `pidvault unlock {vault}` there");
+            bail!(
+                "the vault {vault:?} is not unlocked in your shell: run `pidvault unlock {vault}` there"
+            );
         }
         Ok(())
     }
@@ -80,7 +85,8 @@ pub fn ask(connection: OwnedFd, caller: PeerCred, pidvault: &Pidvault) -> Result
     let stream = UnixStream::from(connection);
     let peer = procs::peer_cred(&stream).context("the passed fd is not a connected socket")?;
     let address = stream.peer_addr().ok();
-    let at_socket = address.as_ref().and_then(|a| a.as_pathname()) == Some(pidvault.socket.as_path());
+    let at_socket =
+        address.as_ref().and_then(|a| a.as_pathname()) == Some(pidvault.socket.as_path());
     if !(peer.uid == pidvault.uid || (peer.uid == 0 && at_socket)) {
         bail!("the passed connection is not to pidvault");
     }
@@ -89,10 +95,15 @@ pub fn ask(connection: OwnedFd, caller: PeerCred, pidvault: &Pidvault) -> Result
     (&stream).write_all(b"{\"op\":\"status\"}\n")?;
     stream.shutdown(std::net::Shutdown::Write)?;
     let mut line = String::new();
-    BufReader::new((&stream).take(MAX_REPLY)).read_line(&mut line).context("no reply from pidvault")?;
+    BufReader::new((&stream).take(MAX_REPLY))
+        .read_line(&mut line)
+        .context("no reply from pidvault")?;
     let reply: Reply = serde_json::from_str(&line).context("malformed reply from pidvault")?;
     if !reply.ok {
-        bail!("pidvault cannot tell whether your shell is unlocked: {}", reply.message);
+        bail!(
+            "pidvault cannot tell whether your shell is unlocked: {}",
+            reply.message
+        );
     }
     let mut unlocked = Unlocked::default();
     for vault in reply.vaults {
@@ -100,10 +111,13 @@ pub fn ask(connection: OwnedFd, caller: PeerCred, pidvault: &Pidvault) -> Result
             continue;
         }
         unlocked.existing.insert(vault.name.clone());
-        let Some(shell) = vault.unlocked_by else { continue };
+        let Some(shell) = vault.unlocked_by else {
+            continue;
+        };
         // pidvault answered for whoever opened the connection; it vouches for this caller
         // only if the caller is in that same unlocked shell
-        if procs::descends_from(caller.pid, shell) && procs::real_uid_of(shell) == Some(caller.uid) {
+        if procs::descends_from(caller.pid, shell) && procs::real_uid_of(shell) == Some(caller.uid)
+        {
             unlocked.unlocked.insert(vault.name, shell);
         }
     }

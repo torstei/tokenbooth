@@ -33,13 +33,19 @@ impl Drop for Setup {
 fn wait_for(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !path.exists() {
-        assert!(Instant::now() < deadline, "nothing listened at {}", path.display());
+        assert!(
+            Instant::now() < deadline,
+            "nothing listened at {}",
+            path.display()
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
 }
 
 fn unlocked_by(pid: u32) -> String {
-    format!(r#"{{"ok":true,"message":"","vaults":[{{"name":"default","ephemeral":false,"unlocked_by":{pid},"sessions":1}},{{"name":"work","ephemeral":false,"unlocked_by":null,"sessions":0}}]}}"#)
+    format!(
+        r#"{{"ok":true,"message":"","vaults":[{{"name":"default","ephemeral":false,"unlocked_by":{pid},"sessions":1}},{{"name":"work","ephemeral":false,"unlocked_by":null,"sessions":0}}]}}"#
+    )
 }
 
 fn me() -> u32 {
@@ -88,7 +94,13 @@ fn setup_as(pidvault_user: &str) -> Setup {
         .spawn()
         .unwrap();
     wait_for(&dir.path().join("sock"));
-    Setup { dir, daemon, answer, booth_says, booth_heard }
+    Setup {
+        dir,
+        daemon,
+        answer,
+        booth_says,
+        booth_heard,
+    }
 }
 
 fn setup() -> Setup {
@@ -110,13 +122,22 @@ impl Setup {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
         child.wait_with_output().unwrap()
     }
 
     fn ok(&self, args: &[&str], stdin: &str) -> String {
         let output = self.run(args, stdin);
-        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         String::from_utf8(output.stdout).unwrap()
     }
 
@@ -140,7 +161,10 @@ impl Setup {
 
     fn uid_dir(&self) -> std::path::PathBuf {
         // SAFETY: getuid has no preconditions
-        self.dir.path().join("state").join(unsafe { libc::getuid() }.to_string())
+        self.dir
+            .path()
+            .join("state")
+            .join(unsafe { libc::getuid() }.to_string())
     }
 }
 
@@ -160,7 +184,11 @@ fn write_frame(mut stream: &UnixStream, frame: &serde_json::Value) {
 }
 
 fn in_an_hour() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() + 3600.0
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+        + 3600.0
 }
 
 const KEPT: &str = "start_url = \"https://gopro.com/login\"\ncookie = \"gp_access_token\"\nvia = [\"google\"]\nkeep_cookies = [\"*@google.com\"]\n";
@@ -198,9 +226,15 @@ fn profiles_are_kept_for_an_unlocked_shell() {
 fn a_profile_in_a_locked_vault_is_neither_listed_nor_set() {
     let s = setup();
     let work = format!("{GOPRO}vault = \"work\"\n");
-    assert!(s.refused(&["profile", "set", "w", "-"], &work).contains("\"work\" is not unlocked"));
+    assert!(
+        s.refused(&["profile", "set", "w", "-"], &work)
+            .contains("\"work\" is not unlocked")
+    );
     s.ok(&["profile", "set", "gopro", "-"], GOPRO);
-    assert!(s.refused(&["profile", "set", "gopro", "-"], &work).contains("\"work\" is not unlocked"));
+    assert!(
+        s.refused(&["profile", "set", "gopro", "-"], &work)
+            .contains("\"work\" is not unlocked")
+    );
 }
 
 #[test]
@@ -208,7 +242,10 @@ fn a_locked_shell_is_refused() {
     let s = setup();
     s.ok(&["profile", "set", "gopro", "-"], GOPRO);
     s.answer(r#"{"ok":true,"message":"","vaults":[{"name":"default","ephemeral":false,"unlocked_by":null,"sessions":0}]}"#.into());
-    assert!(s.refused(&["profile", "show", "gopro"], "").contains("not unlocked"));
+    assert!(
+        s.refused(&["profile", "show", "gopro"], "")
+            .contains("not unlocked")
+    );
     assert_eq!(s.ok(&["profile", "list"], ""), "");
 }
 
@@ -217,7 +254,10 @@ fn pidvault_that_cannot_tell_is_a_refusal() {
     let s = setup();
     s.answer(r#"{"ok":false,"message":"the process that opened this connection has exited","vaults":[]}"#.into());
     let error = s.refused(&["profile", "list"], "");
-    assert!(error.contains("cannot tell") && error.contains("has exited"), "{error}");
+    assert!(
+        error.contains("cannot tell") && error.contains("has exited"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -225,7 +265,10 @@ fn a_shell_the_caller_does_not_descend_from_vouches_for_nothing() {
     let s = setup();
     let mut stranger = Command::new("sleep").arg("30").spawn().unwrap();
     s.answer(unlocked_by(stranger.id()));
-    assert!(s.refused(&["profile", "set", "gopro", "-"], GOPRO).contains("not unlocked"));
+    assert!(
+        s.refused(&["profile", "set", "gopro", "-"], GOPRO)
+            .contains("not unlocked")
+    );
     stranger.kill().unwrap();
     stranger.wait().unwrap();
 }
@@ -233,7 +276,10 @@ fn a_shell_the_caller_does_not_descend_from_vouches_for_nothing() {
 #[test]
 fn a_connection_to_anyone_but_pidvault_is_refused() {
     let s = setup_as("root");
-    assert!(s.refused(&["profile", "list"], "").contains("not to pidvault"));
+    assert!(
+        s.refused(&["profile", "list"], "")
+            .contains("not to pidvault")
+    );
 }
 
 #[test]
@@ -242,7 +288,9 @@ fn a_profile_request_without_a_pidvault_connection_is_refused() {
     let s = setup();
     let stream = UnixStream::connect(s.dir.path().join("sock")).unwrap();
     let body = br#"{"type":"profile-list"}"#;
-    (&stream).write_all(&(body.len() as u32).to_be_bytes()).unwrap();
+    (&stream)
+        .write_all(&(body.len() as u32).to_be_bytes())
+        .unwrap();
     (&stream).write_all(body).unwrap();
     let mut reply = Vec::new();
     std::io::Read::read_to_end(&mut &stream, &mut reply).unwrap();
@@ -253,21 +301,38 @@ fn a_profile_request_without_a_pidvault_connection_is_refused() {
 fn get_runs_a_booth_once_then_answers_from_the_sealed_state() {
     let s = setup();
     s.ok(&["profile", "set", "gopro", "-"], KEPT);
-    s.booth_says(vec![serde_json::json!({"type": "log", "text": "navigate https://gopro.com/login"}), token_result("tok-1")]);
+    s.booth_says(vec![
+        serde_json::json!({"type": "log", "text": "navigate https://gopro.com/login"}),
+        token_result("tok-1"),
+    ]);
     let output = s.run(&["get", "-v", "gopro"], "");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "tok-1\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("navigate https://gopro.com/login"));
     assert_eq!(s.ok(&["get", "gopro"], ""), "tok-1\n");
     let heard = s.booth_heard();
-    assert_eq!(heard.len(), 1, "the second get should not have opened a booth");
+    assert_eq!(
+        heard.len(),
+        1,
+        "the second get should not have opened a booth"
+    );
     assert_eq!(heard[0]["profile"]["name"], "gopro");
     assert_eq!(heard[0]["profile"]["cookie_domain"], "gopro.com");
     assert_eq!(heard[0]["keep"], serde_json::json!([]));
 
     use std::os::unix::fs::PermissionsExt;
-    let key = s.dir.path().join("mount/stored/default/tokenbooth/gopro.key");
-    assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
+    let key = s
+        .dir
+        .path()
+        .join("mount/stored/default/tokenbooth/gopro.key");
+    assert_eq!(
+        std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     let blob = std::fs::read(s.uid_dir().join("sealed/gopro")).unwrap();
     assert!(!String::from_utf8_lossy(&blob).contains("tok-1"));
     assert!(!String::from_utf8_lossy(&blob).contains("SID"));
@@ -299,7 +364,13 @@ fn forget_and_a_replaced_key_both_start_afresh() {
     s.booth_says(vec![token_result("tok-2")]);
     s.ok(&["login", "gopro"], "");
     assert_eq!(s.booth_heard()[2]["keep"], serde_json::json!([sid()]));
-    std::fs::write(s.dir.path().join("mount/stored/default/tokenbooth/gopro.key"), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n").unwrap();
+    std::fs::write(
+        s.dir
+            .path()
+            .join("mount/stored/default/tokenbooth/gopro.key"),
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",
+    )
+    .unwrap();
     let output = s.run(&["get", "gopro"], "");
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("starting afresh"));
@@ -311,14 +382,30 @@ fn each_outcome_has_its_exit_status() {
     let s = setup();
     s.ok(&["profile", "set", "gopro", "-"], KEPT);
     for (result, status, says) in [
-        (serde_json::json!({"type": "result", "outcome": "cancelled", "token": null, "expires": null, "keep": []}), 1, "closed without a token"),
-        (serde_json::json!({"type": "result", "outcome": "timed_out", "token": null, "expires": null, "keep": []}), 3, "timed out"),
-        (serde_json::json!({"type": "result", "outcome": "refused", "token": null, "expires": null, "keep": [], "error": "no Wayland display"}), 2, "the booth refused: no Wayland display"),
+        (
+            serde_json::json!({"type": "result", "outcome": "cancelled", "token": null, "expires": null, "keep": []}),
+            1,
+            "closed without a token",
+        ),
+        (
+            serde_json::json!({"type": "result", "outcome": "timed_out", "token": null, "expires": null, "keep": []}),
+            3,
+            "timed out",
+        ),
+        (
+            serde_json::json!({"type": "result", "outcome": "refused", "token": null, "expires": null, "keep": [], "error": "no Wayland display"}),
+            2,
+            "the booth refused: no Wayland display",
+        ),
     ] {
         s.booth_says(vec![result]);
         let output = s.run(&["get", "gopro"], "");
         assert_eq!(output.status.code(), Some(status));
-        assert!(String::from_utf8_lossy(&output.stderr).contains(says), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(says),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
@@ -341,16 +428,25 @@ fn without_a_display_only_a_cached_token_is_answered() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("no Wayland display"));
     s.booth_says(vec![token_result("tok-1")]);
     s.ok(&["get", "gopro"], "");
-    assert_eq!(String::from_utf8_lossy(&headless(&["get", "gopro"]).stdout), "tok-1\n");
+    assert_eq!(
+        String::from_utf8_lossy(&headless(&["get", "gopro"]).stdout),
+        "tok-1\n"
+    );
 }
 
 #[test]
 fn a_profile_whose_vault_is_gone_can_be_deleted_but_one_in_a_locked_vault_cannot() {
     let s = setup();
     s.answer(r#"{"ok":true,"message":"","vaults":[{"name":"work","ephemeral":false,"unlocked_by":PID,"sessions":1}]}"#.replace("PID", &me().to_string()));
-    s.ok(&["profile", "set", "w", "-"], &format!("{GOPRO}vault = \"work\"\n"));
+    s.ok(
+        &["profile", "set", "w", "-"],
+        &format!("{GOPRO}vault = \"work\"\n"),
+    );
     s.answer(r#"{"ok":true,"message":"","vaults":[{"name":"work","ephemeral":false,"unlocked_by":null,"sessions":0}]}"#.into());
-    assert!(s.refused(&["profile", "delete", "w"], "").contains("not unlocked"));
+    assert!(
+        s.refused(&["profile", "delete", "w"], "")
+            .contains("not unlocked")
+    );
     s.answer(r#"{"ok":true,"message":"","vaults":[]}"#.into());
     s.ok(&["profile", "delete", "w"], "");
 }
@@ -363,15 +459,30 @@ fn to_vault_writes_the_token_into_the_profiles_vault_and_prints_nothing() {
     s.booth_says(vec![token_result("tok-1")]);
     for _ in 0..2 {
         let output = s.run(&["get", "--to-vault", "gopro"], "");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(output.stdout.is_empty());
         let file = s.dir.path().join("mount/stored/default/tokens/gopro");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "tok-1\n");
-        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         std::fs::remove_file(&file).unwrap();
     }
-    assert_eq!(s.booth_heard().len(), 1, "the second get was answered from the cache");
-    assert!(!s.run(&["get", "--to-vault", "--json", "gopro"], "").status.success());
+    assert_eq!(
+        s.booth_heard().len(),
+        1,
+        "the second get was answered from the cache"
+    );
+    assert!(
+        !s.run(&["get", "--to-vault", "--json", "gopro"], "")
+            .status
+            .success()
+    );
 }
 
 #[test]
@@ -388,5 +499,11 @@ fn the_client_refuses_a_daemon_of_its_own_user_before_sending_anything() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("runs as your own user"));
-    assert!(!s.dir.path().join("mount/stored/default/tokenbooth/gopro.key").exists(), "a key was made for a refused daemon");
+    assert!(
+        !s.dir
+            .path()
+            .join("mount/stored/default/tokenbooth/gopro.key")
+            .exists(),
+        "a key was made for a refused daemon"
+    );
 }

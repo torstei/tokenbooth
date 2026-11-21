@@ -48,9 +48,13 @@ pub fn check_name(what: &str, name: &str) -> Result<()> {
     let ok = !name.is_empty()
         && name.len() <= 64
         && !name.starts_with('.')
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b));
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b));
     if !ok {
-        bail!("bad {what} name {name:?}: use letters, digits, '.', '_' and '-', not starting with '.'");
+        bail!(
+            "bad {what} name {name:?}: use letters, digits, '.', '_' and '-', not starting with '.'"
+        );
     }
     Ok(())
 }
@@ -61,8 +65,13 @@ pub fn host_of(url: &str) -> Option<&str> {
     if authority.contains('@') {
         return None;
     }
-    let host = authority.rsplit_once(':').map_or(authority, |(host, _)| host);
-    let ok = !host.is_empty() && host.bytes().all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b));
+    let host = authority
+        .rsplit_once(':')
+        .map_or(authority, |(host, _)| host);
+    let ok = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b));
     ok.then_some(host)
 }
 
@@ -70,7 +79,10 @@ impl Profile {
     pub fn parse(text: &str) -> Result<Profile> {
         let profile: Profile = toml::from_str(text).context("not a valid profile")?;
         if host_of(&profile.start_url).is_none() {
-            bail!("start_url must be an https URL with a plain host: {}", profile.start_url);
+            bail!(
+                "start_url must be an https URL with a plain host: {}",
+                profile.start_url
+            );
         }
         if profile.cookie.is_empty() {
             bail!("cookie must name the cookie that holds the token");
@@ -83,7 +95,10 @@ impl Profile {
         }
         for provider in &profile.via {
             if !PROVIDERS.contains(&provider.as_str()) {
-                bail!("unknown identity provider {provider:?} (known: {})", PROVIDERS.join(", "));
+                bail!(
+                    "unknown identity provider {provider:?} (known: {})",
+                    PROVIDERS.join(", ")
+                );
             }
         }
         for host in profile.allowed_hosts.iter().flatten() {
@@ -131,7 +146,12 @@ impl Store {
     pub fn save(&self, name: &str, text: &str) -> Result<()> {
         let path = self.path(name)?;
         let partial = self.dir.join(format!(".{name}.toml.new"));
-        let mut file = OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&partial)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&partial)?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(&partial, &path)?;
@@ -147,7 +167,9 @@ impl Store {
         let mut names = Vec::new();
         for entry in std::fs::read_dir(&self.dir)? {
             let file = entry?.file_name();
-            let Some(name) = file.to_str().and_then(|f| f.strip_suffix(".toml")) else { continue };
+            let Some(name) = file.to_str().and_then(|f| f.strip_suffix(".toml")) else {
+                continue;
+            };
             if check_name("profile", name).is_ok() {
                 names.push(name.to_owned());
             }
@@ -181,12 +203,30 @@ keep_cookies  = ["*@google.com", "*@*.google.com"]
     fn bad_profiles_are_refused() {
         for (text, complaint) in [
             ("start_url = \"http://x.example/\"\ncookie = \"t\"", "https"),
-            ("start_url = \"https://u@x.example/\"\ncookie = \"t\"", "https"),
-            ("start_url = \"https://x.example/\"\ncookie = \"\"", "cookie"),
-            ("start_url = \"https://x.example/\"\ncookie = \"t\"\nkeep_cookies = [\"SID\"]", "NAME@DOMAIN"),
-            ("start_url = \"https://x.example/\"\ncookie = \"t\"\nvia = [\"evil\"]", "unknown identity provider"),
-            ("start_url = \"https://x.example/\"\ncookie = \"t\"\nvault = \"../x\"", "bad vault name"),
-            ("start_url = \"https://x.example/\"\ncookie = \"t\"\npersist_session = true", "not a valid profile"),
+            (
+                "start_url = \"https://u@x.example/\"\ncookie = \"t\"",
+                "https",
+            ),
+            (
+                "start_url = \"https://x.example/\"\ncookie = \"\"",
+                "cookie",
+            ),
+            (
+                "start_url = \"https://x.example/\"\ncookie = \"t\"\nkeep_cookies = [\"SID\"]",
+                "NAME@DOMAIN",
+            ),
+            (
+                "start_url = \"https://x.example/\"\ncookie = \"t\"\nvia = [\"evil\"]",
+                "unknown identity provider",
+            ),
+            (
+                "start_url = \"https://x.example/\"\ncookie = \"t\"\nvault = \"../x\"",
+                "bad vault name",
+            ),
+            (
+                "start_url = \"https://x.example/\"\ncookie = \"t\"\npersist_session = true",
+                "not a valid profile",
+            ),
         ] {
             let error = format!("{:#}", Profile::parse(text).unwrap_err());
             assert!(error.contains(complaint), "{text}: {error}");

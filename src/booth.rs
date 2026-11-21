@@ -15,8 +15,17 @@ use crate::profile::{Profile, host_of};
 /// tokenbooth/store.py.
 fn provider_hosts(provider: &str) -> &'static [&'static str] {
     match provider {
-        "google" => &["accounts.google.*", "accounts.google.co.*", "accounts.google.com.*", "accounts.youtube.com"],
-        "microsoft" => &["login.microsoftonline.com", "login.microsoft.com", "login.live.com"],
+        "google" => &[
+            "accounts.google.*",
+            "accounts.google.co.*",
+            "accounts.google.com.*",
+            "accounts.youtube.com",
+        ],
+        "microsoft" => &[
+            "login.microsoftonline.com",
+            "login.microsoft.com",
+            "login.live.com",
+        ],
         _ => &[],
     }
 }
@@ -24,9 +33,14 @@ fn provider_hosts(provider: &str) -> &'static [&'static str] {
 /// The booth request for `profile`, resolved as `tokenbooth-dev` resolves one: without
 /// `allowed_hosts`, the start host and its subdomains; the identity providers' hosts added.
 pub fn request(name: &str, profile: &Profile, keep: &[Value], log: bool) -> Value {
-    let host = host_of(&profile.start_url).unwrap_or_default().to_ascii_lowercase();
+    let host = host_of(&profile.start_url)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let base = host.strip_prefix("www.").unwrap_or(&host).to_owned();
-    let mut allowed = profile.allowed_hosts.clone().unwrap_or_else(|| vec![base.clone(), format!("*.{base}")]);
+    let mut allowed = profile
+        .allowed_hosts
+        .clone()
+        .unwrap_or_else(|| vec![base.clone(), format!("*.{base}")]);
     for provider in &profile.via {
         allowed.extend(provider_hosts(provider).iter().map(|h| (*h).to_owned()));
     }
@@ -59,15 +73,30 @@ pub enum Relayed {
 
 /// Hands the request and the caller's Wayland connection to a booth, forwards its log lines to
 /// the caller when `forward_logs`, and returns its result.
-pub fn run(booth_socket: &Path, request: &Value, wayland: OwnedFd, caller: &UnixStream, forward_logs: bool) -> Result<Relayed> {
-    let booth = UnixStream::connect(booth_socket).with_context(|| format!("cannot reach the booth at {}", booth_socket.display()))?;
+pub fn run(
+    booth_socket: &Path,
+    request: &Value,
+    wayland: OwnedFd,
+    caller: &UnixStream,
+    forward_logs: bool,
+) -> Result<Relayed> {
+    let booth = UnixStream::connect(booth_socket)
+        .with_context(|| format!("cannot reach the booth at {}", booth_socket.display()))?;
     frame::send(&booth, request, &[wayland.as_raw_fd()])?;
     drop(wayland);
     caller.set_read_timeout(None)?;
     loop {
         let mut fds = [
-            libc::pollfd { fd: booth.as_raw_fd(), events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: caller.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+            libc::pollfd {
+                fd: booth.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: caller.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
         ];
         // SAFETY: fds outlives the call and its length is the count given
         if unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) } < 0 {
@@ -104,11 +133,18 @@ pub fn expiry(token: &str, cookie_expires: Option<f64>) -> Option<f64> {
     use base64::Engine;
     let jwt = token.split('.').collect::<Vec<_>>();
     let from_jwt = (jwt.len() == 3)
-        .then(|| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(jwt[1].trim_end_matches('=')).ok())
+        .then(|| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(jwt[1].trim_end_matches('='))
+                .ok()
+        })
         .flatten()
         .and_then(|payload| serde_json::from_slice::<Value>(&payload).ok())
         .and_then(|claims| claims["exp"].as_f64());
-    [cookie_expires.filter(|e| *e > 0.0), from_jwt].into_iter().flatten().reduce(f64::min)
+    [cookie_expires.filter(|e| *e > 0.0), from_jwt]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min)
 }
 
 #[cfg(test)]
@@ -121,9 +157,16 @@ mod tests {
 
     #[test]
     fn a_profile_resolves_like_tokenbooth_dev() {
-        let p = profile("start_url = \"https://www.gopro.com/login\"\ncookie = \"t\"\nvia = [\"google\"]\nkeep_cookies = [\"*@google.com\"]");
+        let p = profile(
+            "start_url = \"https://www.gopro.com/login\"\ncookie = \"t\"\nvia = [\"google\"]\nkeep_cookies = [\"*@google.com\"]",
+        );
         let request = request("gopro", &p, &[], true);
-        let hosts: Vec<_> = request["profile"]["allowed_hosts"].as_array().unwrap().iter().map(|h| h.as_str().unwrap()).collect();
+        let hosts: Vec<_> = request["profile"]["allowed_hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h.as_str().unwrap())
+            .collect();
         assert_eq!(&hosts[..2], ["gopro.com", "*.gopro.com"]);
         assert!(hosts.contains(&"accounts.youtube.com"));
         assert_eq!(request["profile"]["cookie_domain"], "gopro.com");
@@ -133,7 +176,9 @@ mod tests {
 
     #[test]
     fn explicit_hosts_and_cookie_domain_win() {
-        let p = profile("start_url = \"https://x.example/\"\ncookie = \"t\"\nallowed_hosts = [\"x.example\"]\ncookie_domain = \"api.example\"");
+        let p = profile(
+            "start_url = \"https://x.example/\"\ncookie = \"t\"\nallowed_hosts = [\"x.example\"]\ncookie_domain = \"api.example\"",
+        );
         let request = request("x", &p, &[], false);
         assert_eq!(request["profile"]["allowed_hosts"], json!(["x.example"]));
         assert_eq!(request["profile"]["cookie_domain"], "api.example");

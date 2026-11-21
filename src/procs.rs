@@ -94,7 +94,13 @@ pub fn parent_of(pid: u32) -> Option<u32> {
 
 pub fn real_uid_of(pid: u32) -> Option<u32> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    status.lines().find_map(|l| l.strip_prefix("Uid:"))?.split_whitespace().next()?.parse().ok()
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// Whether `ancestor` is `pid` or one of its ancestors.
@@ -121,7 +127,15 @@ pub fn uid_of_user(name: &str) -> Option<u32> {
     let mut result: *mut libc::passwd = std::ptr::null_mut();
     // SAFETY: name, pwd, buf and result outlive the call and buf.len() is buf's size; pwd's
     // string pointers into buf are never read
-    let rc = unsafe { libc::getpwnam_r(name.as_ptr(), &mut pwd, buf.as_mut_ptr(), buf.len(), &mut result) };
+    let rc = unsafe {
+        libc::getpwnam_r(
+            name.as_ptr(),
+            &mut pwd,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
     if rc != 0 || result.is_null() {
         return None;
     }
@@ -138,7 +152,10 @@ mod tests {
         let parent = parent_of(me).unwrap();
         assert!(descends_from(me, me));
         assert!(descends_from(me, parent));
-        let mut child = std::process::Command::new("sleep").arg("5").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
         assert!(!descends_from(me, child.id()));
         assert!(descends_from(child.id(), me));
         child.kill().unwrap();
