@@ -441,9 +441,38 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
      apps and issue scoped tokens, which serve an API far better, so GitHub shows that the
      booth works rather than being a site to harvest.
 
+9. **Google Chrome runs as the booth** (spike S5, `spikes/s5-chrome/`, Chrome 158), in the S1
+   unit with `ProtectHome=yes`, drawing through the passed Wayland fd and driven only over
+   `--remote-debugging-pipe`:
+   - Chrome opens a second Wayland connection for GTK. With only the passed one, GTK fails, Chrome
+     falls back to its Qt shim, and Qt aborts the process. With the shim hidden
+     (`InaccessiblePaths=` on `/opt/google/chrome/libqt*_shim.so`) the fallback fails cleanly and
+     Chrome runs with no toolkit.
+   - The sandbox needs nothing of ours: Ubuntu's `/etc/apparmor.d/chrome` grants Chrome `userns`.
+     Every renderer has its own PID namespace and Chrome's seccomp filter on top of the unit's.
+     No TCP socket listens and no `DevToolsActivePort` is written.
+   - Rendering is software, and as the dynamic uid WebGL is unavailable (`null`), since Chrome no
+     longer falls back to a software WebGL. Google's sign-in did not object.
+   - Driven over the pipe, Chrome sets `navigator.webdriver`, and Google refuses sign-in ("This
+     browser or app may not be secure"), retries included. `--disable-blink-features=AutomationControlled`
+     turns the flag off in the engine, and Google then accepts Chrome's own user agent and
+     client hints: no Firefox claim and no script.
+   - Chrome reports every web sign-in to Google (`X-Chrome-ID-Consistency-Request`), and a Chrome
+     holding no Google token of its own is then shown a kept session as signed out: the account
+     listed, the password asked, the second factor spared. The same cookies, played into a
+     Chrome without it, are signed in. Seeding the new profile's `Preferences` with
+     `signin.allowed` and `signin.allowed_on_next_startup` false stops it; the second is the one
+     read at startup. Google also offers Chrome a bound session
+     (`Sec-Session-Google-Registration-List`); the booth turns `EnableBoundSessionCredentials` off,
+     which was not shown to matter.
+   - The keep-set works through `Storage.getCookies` and `Storage.setCookies`, host-only cookies
+     given by URL; the **stay signed in** level works as with Qt WebEngine.
+   - What Chrome does not give: the window has no frame or host strip of the booth's own (an
+     `--app` window shows the page title), and F12 still opens DevTools in it.
+
 Still open: whether **remember the device** can be split from the session, for Google and for
-Entra; whether GitHub's `_device_id` spares its second factor; then the agent and how the
-commands should look.
+Entra; whether GitHub's `_device_id` spares its second factor; how a Chrome booth shows where
+you are typing without a host strip of its own; then the agent and how the commands should look.
 
 ## Implementation plan
 
@@ -479,7 +508,10 @@ script runs, and navigations held at the request stage to enforce the host allow
 locked-down window itself becomes switches and protocol calls instead of Qt code: `--app=` for
 a window without an address bar, `Browser.setDownloadBehavior` to deny downloads, permission
 requests refused. Chrome's managed policies are not an option, since `/etc/opt/chrome/policies`
-would bind the owner's own Chrome as well. Qt WebEngine (P1 or a venv) stays
+would bind the owner's own Chrome as well; what a policy would set goes into the fresh
+profile's `Preferences` instead, as `signin.allowed_on_next_startup` does. The booth unit hides
+Chrome's Qt shim, and the booth starts Chrome with `--disable-blink-features=AutomationControlled`
+([shown](#what-the-prototype-has-shown), 9). Qt WebEngine (P1 or a venv) stays
 the engine for development and experiments. Only `browser.py` knows which engine runs; profiles,
 the keep-set and discovery do not. P3 adds Google to [A5](#adversaries).
 
@@ -493,7 +525,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | S2 | Does Chromium's sandbox run under that unit, with an AppArmor profile allowing user namespaces, and does software rendering suffice? | Settled: yes, with an interpreter of the booth's own ([shown](#what-the-prototype-has-shown), 5) |
 | S3 | Which Google cookies remember the device without keeping the session, and does `setCookie` into an off-the-record profile before the first navigation make the next login skip 2-step verification? | A keep-set for each of the three levels, or the finding that remember-the-device cannot be split off |
 | S4 | Does the pidvault check in [Asking pidvault](#asking-pidvault) hold, including the pid-reuse case? | A test passes a connection on and exits, and is refused |
-| S5 | Can the booth unit run Google Chrome (P3) as S1 and S2 run Qt WebEngine: as a dynamic uid with no home, on the passed Wayland fd (`--ozone-platform=wayland`), with its sandbox on under an AppArmor profile, controlled only over `--remote-debugging-pipe`; and do the GoPro login and the keep-set work through the DevTools protocol with Chrome's own user agent? | The renderer has its own PID namespace and seccomp filter, no debugging port is open, and `tokenbooth get gopro` works on Chrome |
+| S5 | Can the booth unit run Google Chrome (P3) as S1 and S2 run Qt WebEngine: as a dynamic uid with no home, on the passed Wayland fd (`--ozone-platform=wayland`), with its sandbox on under an AppArmor profile, controlled only over `--remote-debugging-pipe`; and do the GoPro login and the keep-set work through the DevTools protocol with Chrome's own user agent? | Settled: yes, with automation flags and Chrome's account sign-in turned off ([shown](#what-the-prototype-has-shown), 9) |
 
 ### Steps
 
@@ -512,7 +544,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 3.3 | Keep-set encrypted with the key from the vault; the token cache | |
 | 3.4 | Token delivery: over the socket, into a vault file, on stdout | |
 | 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory | |
-| 4 | **Packaging**: `.deb`, sysusers, the socket and `DynamicUser` template units with `ProtectHome=yes`, the booth executable `/usr/lib/tokenbooth/booth` and its AppArmor profile, the engine as [S5](#spikes-first) decides (P3, or P2 if Chrome does not fit) | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
+| 4 | **Packaging**: `.deb`, sysusers, the socket and `DynamicUser` template units with `ProtectHome=yes`, the booth executable `/usr/lib/tokenbooth/booth` and its AppArmor profile, Google Chrome as the engine (P3, [S5](#spikes-first)) | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
 | 5 | **pidvault**: `status` and `unlocked_by` documented as a contract with a test; the control-socket peer held by pidfd | |
 | 6 | **mushcam** reads the token from a vault file or through a small socket library | `mushcam` no longer asks for a pasted cookie |
 
