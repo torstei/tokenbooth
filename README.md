@@ -57,15 +57,14 @@ daemon that holds profiles, kept cookies and tokens for shells pidvault has unlo
 ([DESIGN.md](DESIGN.md#steps), step 3). Every request needs the profile's vault unlocked in the
 calling shell.
 
-`systemd/install.sh` (with sudo) installs the daemon as the `tokenbooth` system user, copied
-root-owned to `/usr/local/bin/tokenbooth`, and a socket-activated unit that runs each booth as
-a fresh dynamic user with no access to your home directory, from a root-owned copy of the
-booth's code in `/usr/local/lib/tokenbooth`. Rerun it after changing the booth. Only the daemon
-may start booths.
+It installs as a Debian package, built with [cargo-deb](https://github.com/kornelski/cargo-deb).
+The package depends on `pidvault` and on `google-chrome-stable` from Google's apt repository.
+It runs the daemon as the `tokenbooth` system user, and runs each booth as a fresh dynamic user
+with no access to your home directory, from the booth's code in `/usr/lib/tokenbooth`. Only the
+daemon may start booths. Rebuild and reinstall it after changing the booth.
 
 ```sh
-cargo build --release
-sudo systemd/install.sh                       # sudo systemd/install.sh remove  to take it out
+cargo deb --install                           # sudo apt remove tokenbooth  to take it out
 pidvault unlock                               # the vault the profile names; `default` unless set
 tokenbooth profile set gopro examples/gopro.toml
 tokenbooth get gopro                          # cached token if still valid, else the window

@@ -328,12 +328,11 @@ to the display.
 - **GPU:** logind grants `/dev/dri` to the seat's user only, so the booth renders in software.
   Login pages do not mind.
 - **Chromium's sandbox** needs user namespaces, which Ubuntu 24.04+ allows only to binaries
-  with an AppArmor profile saying so. The namespaces are created by the browser process — the
-  booth's interpreter, not `QtWebEngineProcess` — so Ubuntu's `QtWebEngineProcess` profile does
-  not help. The booth runs from an executable of its own, `/usr/lib/tokenbooth/booth` (a copy
-  of the interpreter or a launcher; not a symlink, since AppArmor attaches by the resolved
-  path), with a profile that grants `userns` to that path alone. Without it, QtWebEngine
-  carries on with seccomp only.
+  with an AppArmor profile saying so. The namespaces are created by the browser process.
+  Ubuntu's own `/etc/apparmor.d/chrome` grants them to `/opt/google/chrome/chrome`, so the
+  package needs no profile of its own. Qt WebEngine's browser process is the booth's
+  interpreter, so it would need an executable of its own with such a profile (S2); without one
+  it carries on with seccomp only.
 - **Security keys** (`/dev/hidraw`) are likewise the seat user's; passkeys need a way through.
 
 ### Claims
@@ -523,9 +522,8 @@ trusted to it.
 
 The booth renders third-party login pages, so its Chromium needs security fixes as soon as
 Chrome gets them, sandbox or not. Whoever ships that Chromium owns that duty. Everything else
-in the package is small and ours: the daemon and client, the booth launcher
-`/usr/lib/tokenbooth/booth` and its AppArmor profile, the systemd units and the site
-descriptions.
+in the package is small and ours: the daemon and client, the booth's code under
+`/usr/lib/tokenbooth`, the systemd units and the site descriptions.
 
 | | Engine | The package | Who ships Chromium fixes |
 |---|---|---|---|
@@ -571,14 +569,14 @@ Each of these could change the plan, so each is settled before the code that dep
 | 1.3 | Framed request and response on an fd instead of argv, files and stdout | The format is written down ([the booth protocol](docs/booth-protocol.md)) and both ends of the tests use it |
 | 1.4 | Refuses to start without Wayland, so never on X11 | |
 | 1.5 | The current CLI becomes a thin wrapper around the booth | `tokenbooth get gopro` works as before |
-| 2 | **The booth as a dynamic uid** (S1, S2, S5): `systemd/`, the code copied root-owned to `/usr/local/lib/tokenbooth`; the caller passes its Wayland connection with the request | Step 1's booth runs as `tokenbooth-booth@` |
+| 2 | **The booth as a dynamic uid** (S1, S2, S5): the units, the code root-owned outside the checkout; the caller passes its Wayland connection with the request | Step 1's booth runs as `tokenbooth-booth@` |
 | 3 | **Daemon and client**, in Rust | |
 | 3.1 | Socket, `SO_PEERCRED` and `SO_PEERPIDFD`, state under `/var/lib/tokenbooth/<uid>/`; the client and daemon are one binary, `tokenbooth`, as pidvault is | `tokenbooth status` reports the caller the kernel saw |
 | 3.2 | The pidvault check (S4); profiles change only through checked requests: `tokenbooth profile set\|show\|list\|delete`, each against the profile's vault | Outside an unlocked shell, no profile can be read, listed or changed |
 | 3.3 | Keep-set encrypted with the key from the vault; the token cache: one blob per profile, XChaCha20-Poly1305 bound to the uid and profile name, under a per-profile key the client keeps in the vault; the daemon runs logins through the booth unit, whose socket becomes the daemon's alone | `tokenbooth get gopro` answers from the sealed state, or through a booth seeded with the sealed keep-set |
 | 3.4 | Token delivery: over the socket, into a vault file (`--to-vault`: `tokens/<profile>` in the profile's vault), on stdout | `tokenbooth get gopro --to-vault` leaves the token in the vault and prints nothing |
 | 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory; tests reach a daemon of their own uid through a variable only a debug build reads | A daemon running as the owner is refused before the key is sent |
-| 4 | **Packaging**: `.deb`, sysusers, the socket and `DynamicUser` template units with `ProtectHome=yes`, the booth executable `/usr/lib/tokenbooth/booth` and its AppArmor profile, Google Chrome as the engine (P3, [S5](#spikes-first)) | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
+| 4 | **Packaging**: a `.deb` built with cargo-deb from `packaging/`: the binary, sysusers, the socket and `DynamicUser` template units, the booth's code under `/usr/lib/tokenbooth`; it depends on `google-chrome-stable` (P3, [S5](#spikes-first)), whose sandbox Ubuntu's AppArmor profile for Chrome already allows | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
 | 5 | **pidvault**: `status` and `unlocked_by` documented as a contract with a test; the control-socket peer held by pidfd | |
 | 6 | **mushcam** reads the token from a vault file or through a small socket library | `mushcam` no longer asks for a pasted cookie |
 

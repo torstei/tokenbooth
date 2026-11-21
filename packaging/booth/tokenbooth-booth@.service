@@ -23,7 +23,7 @@ UMask=0077
 # Chrome falls back to its Qt shim when GTK finds no display of its own, and Qt aborts on the
 # missing display; without the shim the fallback fails cleanly
 InaccessiblePaths=-/opt/google/chrome/libqt5_shim.so -/opt/google/chrome/libqt6_shim.so
-WorkingDirectory=/usr/local/lib/tokenbooth
+WorkingDirectory=/usr/lib/tokenbooth
 ExecStart=/usr/bin/python3 -E -s -B -m tokenbooth.booth --engine chrome
 StandardInput=null
 StandardOutput=journal

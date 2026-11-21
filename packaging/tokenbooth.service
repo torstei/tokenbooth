@@ -7,7 +7,7 @@ After=tokenbooth.socket systemd-sysusers.service
 Type=exec
 User=tokenbooth
 Group=tokenbooth
-ExecStart=/usr/local/bin/tokenbooth daemon
+ExecStart=/usr/bin/tokenbooth daemon
 Restart=on-failure
 
 StateDirectory=tokenbooth

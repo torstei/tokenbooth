@@ -24,3 +24,32 @@ tempfile = "3.27.0"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"
+
+[package.metadata.deb]
+extended-description = """\
+A shell that pidvault has unlocked asks the daemon for a site's token. It answers from \
+its sealed cache or opens a booth: Google Chrome as a fresh dynamic user, drawing on the \
+caller's Wayland connection, limited to the site's hosts, that hands back the token and \
+nothing else."""
+changelog = "packaging/changelog.Debian"
+section = "net"
+copyright = "2026 Torstein Tauno Svendsen <torstei@gmail.com>"
+depends = "$auto, python3, systemd (>= 257), pidvault (>= 0.6.0), google-chrome-stable"
+assets = [
+    ["target/release/tokenbooth", "usr/bin/", "755"],
+    ["tokenbooth/__init__.py", "usr/lib/tokenbooth/tokenbooth/", "644"],
+    ["tokenbooth/booth.py", "usr/lib/tokenbooth/tokenbooth/", "644"],
+    ["tokenbooth/discover.py", "usr/lib/tokenbooth/tokenbooth/", "644"],
+    ["tokenbooth/protocol.py", "usr/lib/tokenbooth/tokenbooth/", "644"],
+    ["tokenbooth/store.py", "usr/lib/tokenbooth/tokenbooth/", "644"],
+    ["tokenbooth/engines/__init__.py", "usr/lib/tokenbooth/tokenbooth/engines/", "644"],
+    ["tokenbooth/engines/chrome.py", "usr/lib/tokenbooth/tokenbooth/engines/", "644"],
+    # an asset, not a unit-script: cargo-deb would install the template without its @
+    ["packaging/booth/tokenbooth-booth@.service", "usr/lib/systemd/system/", "644"],
+    ["README.md", "usr/share/doc/tokenbooth/README.md", "644"],
+]
+maintainer-scripts = "packaging"
+systemd-units = [
+    { unit-scripts = "packaging", enable = true, start = true },
+    { unit-scripts = "packaging/booth", unit-name = "tokenbooth-booth", enable = true, start = true },
+]
