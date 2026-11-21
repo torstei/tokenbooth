@@ -61,7 +61,9 @@ It installs as a Debian package, built with [cargo-deb](https://github.com/korne
 The package depends on `pidvault` and on `google-chrome-stable` from Google's apt repository.
 It runs the daemon as the `tokenbooth` system user, and runs each booth as a fresh dynamic user
 with no access to your home directory, from the booth's code in `/usr/lib/tokenbooth`. Only the
-daemon may start booths. Rebuild and reinstall it after changing the booth.
+daemon may start booths. Rebuild and reinstall it after changing the booth. The man pages in
+`packaging/man/` are generated from the command line and `packaging/tokenbooth.1.sections`; a
+test fails when they are stale and says how to regenerate them.
 
 ```sh
 cargo deb --install                           # sudo apt remove tokenbooth  to take it out

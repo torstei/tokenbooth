@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tokenbooth-status 1  "tokenbooth 0.1.0" 
+.SH NAME
+tokenbooth\-status \- Show who the daemon takes you to be, and which of your vaults it sees unlocked here
+.SH SYNOPSIS
+\fBtokenbooth status\fR [\fB\-\-socket\fR] [\fB\-\-pidvault\-socket\fR] [\fB\-\-pidvault\-mount\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Show who the daemon takes you to be, and which of your vaults it sees unlocked here
+.SH OPTIONS
+.TP
+\fB\-\-socket\fR \fI<SOCKET>\fR [default: /run/tokenbooth/sock]
+The daemon\*(Aqs socket
+.TP
+\fB\-\-pidvault\-socket\fR \fI<PIDVAULT_SOCKET>\fR [default: /run/pidvault.sock]
+pidvault\*(Aqs control socket, which the daemon asks whether this shell is unlocked
+.TP
+\fB\-\-pidvault\-mount\fR \fI<PIDVAULT_MOUNT>\fR [default: /run/pidvault]
+Where pidvault shows unlocked vaults; each profile\*(Aqs key is kept in its vault there
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

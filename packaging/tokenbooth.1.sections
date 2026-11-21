@@ -1,0 +1,92 @@
+.SH DESCRIPTION
+\fBtokenbooth\fR opens a site's login page in a locked\-down browser window and hands the
+token the login leaves behind to the shell that asked for it.
+.PP
+Every request goes to the tokenbooth daemon, and is served only for a shell in which
+\fBpidvault\fR(1) has unlocked the vault the profile names. The daemon answers \fBget\fR from
+its cache while the token is valid. Otherwise it opens a booth: Google Chrome as a fresh
+dynamic user that owns nothing, drawing through the caller's Wayland connection, allowed to
+navigate only to the profile's hosts, and gone once the token appears.
+.PP
+Cookies named in \fIkeep_cookies\fR are kept from one login to the next, so that a provider
+can remember the device. They and the token are sealed with a key kept in the profile's
+vault, and only the daemon and the booth ever see them; the client sees only the token.
+.PP
+The window opens only on Wayland. On X11, where any client can read what is typed, it is
+refused.
+.SH PROFILES
+A profile is a TOML file, stored with \fBtokenbooth profile set\fR \fINAME FILE\fR:
+.TP
+\fBstart_url\fR
+The login page.
+.TP
+\fBcookie\fR
+The name of the cookie that holds the token.
+.TP
+\fBcookie_domain\fR
+The domain that cookie is set for. Default: the host of \fIstart_url\fR without \fBwww.\fR
+.TP
+\fBvia\fR
+Identity providers the login passes through, whose hosts are allowed as well: \fBgoogle\fR,
+\fBmicrosoft\fR.
+.TP
+\fBallowed_hosts\fR
+Hosts the window may navigate to, as globs. Default: the host of \fIstart_url\fR and its
+subdomains.
+.TP
+\fBkeep_cookies\fR
+Cookies to keep for the next login, as \fINAME\fR@\fIDOMAIN\fR globs, for instance
+\fB*@google.com\fR. The token cookie is never kept.
+.TP
+\fBdone_url\fR
+A regular expression the page's URL must match before the token is taken.
+.TP
+\fBuser_agent\fR
+A user agent to claim instead of Chrome's own.
+.TP
+\fBtimeout\fR
+Seconds before the window gives up; 0 for never. Default: 600.
+.TP
+\fBvault\fR
+The pidvault vault that must be unlocked to use or change the profile, and that holds its
+key. Default: \fBdefault\fR.
+.PP
+For example:
+.PP
+.nf
+.RS
+start_url     = "https://gopro.com/login"
+cookie        = "gp_access_token"
+via           = ["google"]
+keep_cookies  = ["*@google.com", "*@*.google.com"]
+.RE
+.fi
+.SH EXIT STATUS
+.TP
+\fB0\fR
+The token was printed or written.
+.TP
+\fB1\fR
+The window was closed without a token.
+.TP
+\fB2\fR
+An error, or the request was refused.
+.TP
+\fB3\fR
+The window timed out.
+.SH FILES
+.TP
+\fI/run/pidvault/stored/VAULT/tokenbooth/PROFILE.key\fR
+The profile's key, made on first use. Without it the sealed state cannot be opened, and the
+next login starts afresh.
+.TP
+\fI/run/pidvault/stored/VAULT/tokens/PROFILE\fR
+Where \fB\-\-to\-vault\fR writes the token.
+.TP
+\fI/var/lib/tokenbooth/UID/\fR
+The daemon's state for each user: profiles, and each profile's sealed token and kept cookies.
+.TP
+\fI/run/tokenbooth/sock\fR
+The daemon's socket.
+.SH SEE ALSO
+\fBpidvault\fR(1), \fBjournalctl\fR(1): \fBjournalctl \-u tokenbooth \-u 'tokenbooth\-booth@*'\fR

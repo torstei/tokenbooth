@@ -343,3 +343,70 @@ fn forget(cli: &Cli, name: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    const SOURCE: &str = concat!("tokenbooth ", env!("CARGO_PKG_VERSION"));
+
+    fn pages() -> BTreeMap<String, Vec<u8>> {
+        fn add(cmd: clap::Command, pages: &mut BTreeMap<String, Vec<u8>>) {
+            for sub in cmd.get_subcommands().cloned() {
+                add(sub, pages);
+            }
+            let man = clap_mangen::Man::new(cmd).source(SOURCE);
+            let mut page = Vec::new();
+            man.render(&mut page).unwrap();
+            pages.insert(man.get_filename(), page);
+        }
+        use clap::CommandFactory;
+        let mut cmd = Cli::command().disable_help_subcommand(true);
+        cmd.build();
+        let mut pages = BTreeMap::new();
+        add(cmd.clone(), &mut pages);
+
+        let (description, sections) = include_str!("../packaging/tokenbooth.1.sections")
+            .split_once("\n.SH PROFILES\n")
+            .unwrap();
+        let man = clap_mangen::Man::new(cmd).source(SOURCE);
+        let mut main = Vec::new();
+        man.render_title(&mut main).unwrap();
+        man.render_name_section(&mut main).unwrap();
+        man.render_synopsis_section(&mut main).unwrap();
+        main.extend_from_slice(description.as_bytes());
+        main.push(b'\n');
+        man.render_options_section(&mut main).unwrap();
+        man.render_subcommands_section(&mut main).unwrap();
+        main.extend_from_slice(b".SH PROFILES\n");
+        main.extend_from_slice(sections.as_bytes());
+        man.render_version_section(&mut main).unwrap();
+        pages.insert(man.get_filename(), main);
+        pages
+    }
+
+    /// The packaged man pages are generated from the command line definitions and, for
+    /// tokenbooth(1), packaging/tokenbooth.1.sections: its DESCRIPTION goes before the options,
+    /// the rest from PROFILES on after the subcommands. Run with TOKENBOOTH_WRITE_MAN=1 to
+    /// regenerate them after changing either.
+    #[test]
+    fn the_man_pages_are_up_to_date() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/man");
+        let pages = pages();
+        if std::env::var_os("TOKENBOOTH_WRITE_MAN").is_some() {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for (name, page) in &pages {
+                std::fs::write(dir.join(name), page).unwrap();
+            }
+        }
+        let packaged: BTreeMap<String, Vec<u8>> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .map(|entry| entry.unwrap())
+            .map(|entry| (entry.file_name().into_string().unwrap(), std::fs::read(entry.path()).unwrap()))
+            .collect();
+        assert!(packaged == pages, "packaging/man is stale; run TOKENBOOTH_WRITE_MAN=1 cargo test the_man_pages");
+    }
+}
