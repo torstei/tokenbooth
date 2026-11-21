@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -93,3 +94,29 @@ def test_a_cookie_given_a_domain_stays_a_domain_cookie_and_a_host_only_one_goes_
     assert chrome.cookie_param(cookie("SID", ".google.com"))["domain"] == ".google.com"
     host_only = chrome.cookie_param(cookie("__Host-GAPS", "accounts.google.com"))
     assert host_only["url"] == "https://accounts.google.com/" and "domain" not in host_only
+
+
+def test_a_booth_unit_gets_the_wayland_connection_with_the_request(tmp_path):
+    """Stands in for systemd's Accept=yes: each connection to the listening socket gets a booth
+    of its own, on the accepted connection's fd."""
+    path = str(tmp_path / "booth.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    listener.listen()
+    booths = []
+
+    def accept() -> None:
+        conn, _ = listener.accept()
+        booths.append(subprocess.Popen([sys.executable, "-I", "-m", "tokenbooth.booth", "--engine", "chrome",
+                                        str(conn.fileno())], pass_fds=[conn.fileno()], env=headless(),
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        conn.close()
+
+    threading.Thread(target=accept, daemon=True).start()
+    ours, theirs = socket.socketpair()
+    result = protocol.connect_booth(path, Request(mode="login", profile=profile(timeout=2)), theirs)
+    theirs.close()
+    assert result.outcome == "timed_out"
+    assert booths[0].wait(30) == 0
+    ours.settimeout(5)
+    assert ours.recv(1) == b"", "the booth kept the passed connection open after it exited"

@@ -5,6 +5,7 @@ Exit status: 0 token printed, 1 window closed without a token, 2 usage error, 3 
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -41,7 +42,12 @@ def common_options(p: argparse.ArgumentParser, suppress: bool) -> None:
     p.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS if suppress else False,
                    help="log navigations and cookie names (never values) to stderr")
     p.add_argument("--engine", choices=ENGINES, default=argparse.SUPPRESS if suppress else "chrome",
-                   help="the browser the booth drives: Google Chrome (default) or Qt WebEngine")
+                   help="the browser the booth drives: Google Chrome (default) or Qt WebEngine;"
+                        " ignored with --booth-socket, where the unit decides")
+    p.add_argument("--booth-socket", metavar="PATH",
+                   default=argparse.SUPPRESS if suppress else os.environ.get("TOKENBOOTH_BOOTH_SOCKET"),
+                   help="ask the booth unit listening at PATH, which runs as a user of its own, instead of"
+                        " starting a booth as you (default: $TOKENBOOTH_BOOTH_SOCKET)")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -114,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
             "keep_cookies", "user_agent", "timeout")}
         discovering = args.command == "discover"
         profile = store.Profile.load(home, args.name, overrides, args.extra_hosts, args.via,
-                                     require_cookie=not discovering, engine=args.engine)
+                                     require_cookie=not discovering,
+                                     engine="chrome" if args.booth_socket else args.engine)
 
         if args.command == "get" and (token := store.cached_token(home, profile.name)):
             emit(token, None, args.json)
@@ -122,8 +129,14 @@ def main(argv: list[str] | None = None) -> int:
 
         request = protocol.Request(mode="discover" if discovering else "login", profile=profile,
                                    keep=store.load_keep(home, profile.name), log=args.verbose)
-        result = protocol.run_booth(request, on_log=lambda text: print(f"tokenbooth: {text}", file=sys.stderr,
-                                                                       flush=True), engine=args.engine)
+        def on_log(text: str) -> None:
+            print(f"tokenbooth: {text}", file=sys.stderr, flush=True)
+
+        if args.booth_socket:
+            with protocol.wayland_connection(dict(os.environ)) as wayland:
+                result = protocol.connect_booth(args.booth_socket, request, wayland, on_log)
+        else:
+            result = protocol.run_booth(request, on_log, engine=args.engine)
     except store.UsageError as e:
         print(f"tokenbooth: {e}", file=sys.stderr)
         return EXIT_USAGE

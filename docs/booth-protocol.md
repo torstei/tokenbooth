@@ -22,8 +22,10 @@ holding an object with a string `type`.
 
 - A frame is at most 1 MiB (1 048 576 bytes).
 - File descriptors travel as `SCM_RIGHTS` with a frame's first bytes, at most 4 per frame.
-  Version 1 defines none, and a booth closes any it receives. The Wayland connection will be the
-  first.
+  A `request` may carry one: a connection to the Wayland compositor, which the booth then draws
+  through as `WAYLAND_SOCKET` instead of any display of its own. A booth that cannot reach the
+  owner's compositor, running as a user of its own, needs it. A request with more is refused;
+  fds on any other frame are closed unread.
 - Every key of a request is required, and a request or result with a key not listed here is
   refused, so a change to either is a new `version`.
 

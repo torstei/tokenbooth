@@ -48,15 +48,28 @@ def confine_display(environ: MutableMapping[str, str]) -> bool:
     return platform == "offscreen"
 
 
+def adopt_wayland(fd: int, environ: MutableMapping[str, str]) -> None:
+    """Draw through the connection the caller passed, never one of our own."""
+    environ["WAYLAND_SOCKET"] = str(fd)
+    environ.pop("WAYLAND_DISPLAY", None)
+
+
 def serve(sock: socket.socket, engine_name: str) -> int:
     try:
         frame = protocol.receive(sock)
         if frame is None:
             return 1
         message, fds = frame
-        for fd in fds:
-            os.close(fd)
-        request = Request.from_message(message)
+        try:
+            if len(fds) > 1:
+                raise ProtocolError("a request carries at most one fd, the Wayland connection")
+            request = Request.from_message(message)
+        except ProtocolError:
+            for fd in fds:
+                os.close(fd)
+            raise
+        if fds:
+            adopt_wayland(fds[0], os.environ)
     except ProtocolError as e:
         reply(sock, Result("refused", error=str(e)))
         return 2

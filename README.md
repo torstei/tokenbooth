@@ -48,6 +48,21 @@ vault to keep the kept cookies and tokens out of reach of everything but unlocke
 
 The window opens only on Wayland; on X11, where any client can read what is typed, it refuses.
 
+### The booth as a user of its own
+
+`systemd/install.sh` (with sudo) installs a socket-activated unit that runs each booth as a
+fresh dynamic user, with no access to your home directory, serving the code in this checkout
+read-only. Point the CLI at it, and it passes the booth a connection to your Wayland display
+with the request:
+
+```sh
+sudo systemd/install.sh                       # sudo systemd/install.sh remove  to take it out
+export TOKENBOOTH_BOOTH_SOCKET=/run/tokenbooth/booth.sock     # or --booth-socket PATH
+.venv/bin/tokenbooth login gopro
+```
+
+The unit runs Google Chrome only. Its log is in `journalctl -u 'tokenbooth-booth@*'`.
+
 Exit status: 0 token printed, 1 window closed without one, 2 usage error or refused, 3 timed out.
 
 ## License

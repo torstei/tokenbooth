@@ -223,10 +223,11 @@ makes none of the claims below.
   directory, as pidvault's client does.
 - **The booth** is a browser, Google Chrome — the largest attack surface by far — so it gets
   nothing it can keep. Each run is an instance of a socket-activated unit with `DynamicUser=yes`
-  (`Accept=yes`, on a socket only the daemon can connect to): a uid that has never existed
-  before and owns nothing, no `/home` (`ProtectHome=yes`; `DynamicUser=` alone leaves it
-  listable), a private `/tmp`, an off-the-record
-  browser profile held in memory, and a clean environment, so no `LD_PRELOAD`, `QT_*`,
+  (`Accept=yes`, on a socket only the daemon can connect to): a uid of its own that owns
+  nothing (`User=tb-%i`; `DynamicUser=` alone names the user after the template, so every
+  instance would share one), a PID namespace of its own (`PrivatePIDs=yes`), so no booth can
+  see, signal or enter another's processes, no `/home` (`ProtectHome=yes`; `DynamicUser=` alone
+  leaves it listable), a private `/tmp`, a browser profile there, and a clean environment, so no `LD_PRELOAD`, `QT_*`,
   `PYTHON*` or `QTWEBENGINE_*` reaches it from the caller. It exits when the login completes
   or is cancelled, and everything it wrote goes with its uid.
 - **The code is root-owned** under `/usr`, from a package, never a virtualenv in a home
@@ -549,7 +550,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 1.3 | Framed request and response on an fd instead of argv, files and stdout | The format is written down ([the booth protocol](docs/booth-protocol.md)) and both ends of the tests use it |
 | 1.4 | Refuses to start without Wayland, so never on X11 | |
 | 1.5 | The current CLI becomes a thin wrapper around the booth | `tokenbooth get gopro` works as before |
-| 2 | **The booth as a dynamic uid** (S1, S2) | Step 1's booth runs as `tokenbooth-booth@` |
+| 2 | **The booth as a dynamic uid** (S1, S2, S5): `systemd/`, the code bound read-only from a checkout until step 4; the caller passes its Wayland connection with the request | Step 1's booth runs as `tokenbooth-booth@` |
 | 3 | **Daemon and client**, in Rust | |
 | 3.1 | Socket, `SO_PEERCRED` and `SO_PEERPIDFD`, state under `/var/lib/tokenbooth/<uid>/` | |
 | 3.2 | The pidvault check (S4); profiles change only through checked requests | |

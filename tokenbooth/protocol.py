@@ -164,22 +164,31 @@ class Result:
         return result
 
 
-def run_booth(request: Request, on_log: Callable[[str], None] | None = None,
-              env: dict | None = None, engine: str = "chrome") -> Result:
-    """Start a booth as a child process, hand it the request and wait for its result. Closing
-    our end, as an exception here does, makes the booth quit."""
-    ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-    booth = subprocess.Popen([sys.executable, "-I", "-m", "tokenbooth.booth", "--engine", engine,
-                              str(theirs.fileno())],
-                             pass_fds=[theirs.fileno()], stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, env=env)
-    theirs.close()
+def wayland_connection(environ: dict) -> socket.socket:
+    """A new connection to the compositor, to pass to a booth that cannot reach it itself."""
+    display = environ.get("WAYLAND_DISPLAY")
+    if not display:
+        raise ProtocolError("no Wayland display: the booth never draws through X11")
+    path = display if display.startswith("/") else os.path.join(environ.get("XDG_RUNTIME_DIR", ""), display)
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        connection.connect(path)
+    except OSError as e:
+        connection.close()
+        raise ProtocolError(f"cannot connect to the Wayland display at {path}: {e.strerror}") from None
+    return connection
+
+
+def converse(sock: socket.socket, request: Request, fds: list[int],
+             on_log: Callable[[str], None] | None) -> Result | None:
+    """Send the request and read until the result. Closes the socket, which makes a booth that
+    is still running quit."""
     result = None
     try:
-        send(ours, request.to_message())
-        while result is None and (frame := receive(ours)) is not None:
-            message, fds = frame
-            for fd in fds:
+        send(sock, request.to_message(), fds)
+        while result is None and (frame := receive(sock)) is not None:
+            message, received = frame
+            for fd in received:
                 os.close(fd)
             if message["type"] == "log":
                 if on_log and isinstance(message.get("text"), str):
@@ -187,8 +196,39 @@ def run_booth(request: Request, on_log: Callable[[str], None] | None = None,
             else:
                 result = Result.from_message(message)
     finally:
-        ours.close()
+        sock.close()
+    return result
+
+
+def run_booth(request: Request, on_log: Callable[[str], None] | None = None,
+              env: dict | None = None, engine: str = "chrome") -> Result:
+    """Start a booth as a child process, running as the caller and reaching the display itself."""
+    ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    booth = subprocess.Popen([sys.executable, "-I", "-m", "tokenbooth.booth", "--engine", engine,
+                              str(theirs.fileno())],
+                             pass_fds=[theirs.fileno()], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, env=env)
+    theirs.close()
+    try:
+        result = converse(ours, request, [], on_log)
+    finally:
         status = booth.wait()
     if result is None:
         raise ProtocolError(f"the booth exited without a result (status {status})")
+    return result
+
+
+def connect_booth(path: str, request: Request, wayland: socket.socket,
+                  on_log: Callable[[str], None] | None = None) -> Result:
+    """Ask the booth listening at `path`, a socket-activated unit, passing it the Wayland
+    connection it draws through."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(path)
+    except OSError as e:
+        sock.close()
+        raise ProtocolError(f"cannot reach the booth at {path}: {e.strerror}") from None
+    result = converse(sock, request, [wayland.fileno()], on_log)
+    if result is None:
+        raise ProtocolError("the booth closed the connection without a result")
     return result
