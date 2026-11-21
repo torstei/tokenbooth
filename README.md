@@ -57,16 +57,34 @@ daemon that holds profiles, kept cookies and tokens for shells pidvault has unlo
 ([DESIGN.md](DESIGN.md#steps), step 3). Every request needs the profile's vault unlocked in the
 calling shell.
 
-It installs as a Debian package, built with [cargo-deb](https://github.com/kornelski/cargo-deb).
-The package depends on `pidvault` and on `google-chrome-stable` from Google's apt repository.
-It runs the daemon as the `tokenbooth` system user, and runs each booth as a fresh dynamic user
-with no access to your home directory, from the booth's code in `/usr/lib/tokenbooth`. Only the
-daemon may start booths. Rebuild and reinstall it after changing the booth. The man pages in
-`packaging/man/` are generated from the command line and `packaging/tokenbooth.1.sections`; a
-test fails when they are stale and says how to regenerate them.
+It installs as a Debian package, for Ubuntu 26.04 or later on amd64. The package runs the
+daemon as the `tokenbooth` system user, and each booth as a fresh dynamic user with no access to
+your home directory, from the booth's code in `/usr/lib/tokenbooth`. Only the daemon may start
+booths. It depends on `pidvault` and on `google-chrome-stable`, each from its own apt
+repository. From tokenbooth's:
 
 ```sh
-cargo deb --install                           # sudo apt remove tokenbooth  to take it out
+sudo curl -fsSLo /etc/apt/keyrings/tokenbooth.asc https://torstei.github.io/tokenbooth/tokenbooth.asc
+echo "deb [signed-by=/etc/apt/keyrings/tokenbooth.asc] https://torstei.github.io/tokenbooth stable main" \
+  | sudo tee /etc/apt/sources.list.d/tokenbooth.list
+sudo apt update && sudo apt install tokenbooth
+```
+
+Each release is built and attested by `.github/workflows/release.yml` from a `v*` tag, and its
+package and provenance bundle are on the [releases](https://github.com/torstei/tokenbooth/releases)
+page (`gh attestation verify tokenbooth_*_amd64.deb --repo torstei/tokenbooth`). The package
+installs `/etc/apt/attestations.d/tokenbooth.toml`, a policy for
+[apt-attest](https://github.com/torstei/apt-attest): with apt-attest installed, apt installs
+tokenbooth, or anything from its repository, only if that workflow built and attested it.
+Delete the file to go without the check; upgrades do not put it back.
+
+From a checkout, `cargo deb --install` builds and installs the package with dpkg, which
+apt-attest does not check. Rebuild and reinstall it after changing the booth. The man pages in
+`packaging/man/` are generated from the command line and `packaging/tokenbooth.1.sections`; a
+test fails when they are stale and says how to regenerate them. CI runs the tests, clippy,
+`cargo deny` and lintian on the package.
+
+```sh
 pidvault unlock                               # the vault the profile names; `default` unless set
 tokenbooth profile set gopro examples/gopro.toml
 tokenbooth get gopro                          # cached token if still valid, else the window
