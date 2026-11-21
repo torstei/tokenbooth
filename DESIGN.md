@@ -244,10 +244,16 @@ caller opened:
 
 1. The client connects to `/run/pidvault.sock` and passes that connection, with its request,
    to tokenboothd.
-2. tokenboothd checks that the passed socket's peer is the `pidvault` uid, so the reply is
-   pidvault's; that its `SO_PEERCRED` pid is the pid of the client's own connection to
-   tokenboothd; then sends `{"op":"status"}` on it and reads the reply.
-3. The profile's vault (`vault`, default `default`) must show `unlocked_by`.
+2. tokenboothd checks that the passed connection leads to pidvault, so the reply is
+   pidvault's, then sends `{"op":"status"}` on it and reads the reply. A connection's peer
+   credentials are those of whoever created the listening socket: the `pidvault` account, or,
+   with pidvault socket-activated, systemd as root. A root listener counts only when its
+   address is pidvault's socket path, a name only root can give it; a fake made by A1 has the
+   owner's uid whatever name it binds, in whatever namespace.
+3. The profile's vault (`vault`, default `default`) must show `unlocked_by`, and the client
+   must descend from that shell and share its uid. pidvault answered for whoever opened the
+   connection; that vouches for the client only from inside the same shell, so an unlocked
+   shell's connection passed to a process outside it vouches for nothing.
 4. Afterwards the client's pidfd, taken by `SO_PEERPIDFD` on its connection to tokenboothd,
    must not have exited. While the client lives its pid cannot be reused, so the process
    pidvault judged was the client and not whatever took over the pid of an A1 that opened a
@@ -261,7 +267,9 @@ pidvault 0.6 documents this use of `status` as a contract for other programs ("A
 pidvault from another program" in its security design) and itself holds the control-socket
 peer by pidfd, refusing once the process that opened the connection has exited (its claim
 C8), so step 4 is a second line of defence. tokenbooth therefore needs pidvault 0.6 or later,
-and Linux 6.5 or later for `SO_PEERPIDFD`.
+and Linux 6.5 or later for `SO_PEERPIDFD`. The contract's own advice, to check that the passed
+socket's peer is the `pidvault` account, cannot hold for pidvault's socket-activated
+installation, where the peer is systemd (pid 1, uid 0); hence the socket-path test in step 2.
 
 The state key in the vault is still needed, to encrypt the keep-set (T2), not to prove who is
 asking.
@@ -482,6 +490,16 @@ signing in with a passkey on a phone probably does not. Not in the prototype.
    - What Chrome does not give: the window has no frame or host strip of the booth's own (an
      `--app` window shows the page title), and F12 still opens DevTools in it.
 
+10. **The pidvault check holds** (spike S4, `spikes/s4-pidvault/check.py`, pidvault 0.6.0), run
+    from a shell with a test vault unlocked against the installed daemon:
+    - A connection the client opened itself is answered with the vault unlocked.
+    - A connection opened by a process that then passed it on and exited is refused by pidvault
+      itself ("the process that opened this connection has exited").
+    - The shell's connection used by a process that has left the shell's process tree, and such a
+      process's own connection, are both answered with nothing unlocked.
+    - A connection to pidvault's socket-activated control socket has systemd (pid 1, uid 0) as
+      its peer, never the `pidvault` account, so the peer is told apart by uid 0 and its address.
+
 Still open: whether **remember the device** can be split from the session, for Google and for
 Entra; whether GitHub's `_device_id` spares its second factor; how a Chrome booth shows where
 you are typing without a host strip of its own; then the agent and how the commands should look.
@@ -537,7 +555,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | S1 | Can a booth unit receive the Wayland fd? `systemd-run` cannot hand a transient unit an arbitrary fd. Candidate: a socket-activated `tokenbooth-booth@.service` with `Accept=yes` and `DynamicUser=yes`, on a socket only the tokenbooth uid can connect to; the daemon connects and sends the Wayland fd and the request over `SCM_RIGHTS`, and the booth sets `WAYLAND_SOCKET` before Qt starts. | Settled: yes ([shown](#what-the-prototype-has-shown), 4) |
 | S2 | Does Chromium's sandbox run under that unit, with an AppArmor profile allowing user namespaces, and does software rendering suffice? | Settled: yes, with an interpreter of the booth's own ([shown](#what-the-prototype-has-shown), 5) |
 | S3 | Which Google cookies remember the device without keeping the session, and does `setCookie` into an off-the-record profile before the first navigation make the next login skip 2-step verification? | A keep-set for each of the three levels, or the finding that remember-the-device cannot be split off |
-| S4 | Does the pidvault check in [Asking pidvault](#asking-pidvault) hold, including the pid-reuse case? | A test passes a connection on and exits, and is refused |
+| S4 | Does the pidvault check in [Asking pidvault](#asking-pidvault) hold, including the pid-reuse case? (`spikes/s4-pidvault/check.py`) | Settled: yes ([shown](#what-the-prototype-has-shown), 10) |
 | S5 | Can the booth unit run Google Chrome (P3) as S1 and S2 run Qt WebEngine: as a dynamic uid with no home, on the passed Wayland fd (`--ozone-platform=wayland`), with its sandbox on under an AppArmor profile, controlled only over `--remote-debugging-pipe`; and do the GoPro login and the keep-set work through the DevTools protocol with Chrome's own user agent? | Settled: yes, with automation flags and Chrome's account sign-in turned off ([shown](#what-the-prototype-has-shown), 9) |
 
 ### Steps
@@ -553,7 +571,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 2 | **The booth as a dynamic uid** (S1, S2, S5): `systemd/`, the code bound read-only from a checkout until step 4; the caller passes its Wayland connection with the request | Step 1's booth runs as `tokenbooth-booth@` |
 | 3 | **Daemon and client**, in Rust | |
 | 3.1 | Socket, `SO_PEERCRED` and `SO_PEERPIDFD`, state under `/var/lib/tokenbooth/<uid>/`; the client and daemon are one binary, `tokenbooth`, as pidvault is | `tokenbooth status` reports the caller the kernel saw |
-| 3.2 | The pidvault check (S4); profiles change only through checked requests | |
+| 3.2 | The pidvault check (S4); profiles change only through checked requests: `tokenbooth profile set\|show\|list\|delete`, each against the profile's vault | Outside an unlocked shell, no profile can be read, listed or changed |
 | 3.3 | Keep-set encrypted with the key from the vault; the token cache | |
 | 3.4 | Token delivery: over the socket, into a vault file, on stdout | |
 | 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory | |

@@ -93,6 +93,7 @@ class Profile:
     user_agent: str = ""
     timeout: int = 600
     via: list[str] = field(default_factory=list)
+    vault: str = "default"
 
     @classmethod
     def load(cls, home: Path, name: str, overrides: dict, extra_hosts: list[str] = (), via: list[str] = (),

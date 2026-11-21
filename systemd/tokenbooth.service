@@ -36,7 +36,6 @@ ProtectKernelLogs=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
-ProtectProc=invisible
 ProcSubset=pid
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
@@ -45,7 +44,8 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 SystemCallErrorNumber=EPERM
-# Not PrivateUsers=: callers are identified by uid, which it would remap.
+# Not PrivateUsers=: callers are identified by uid, which it would remap. Not ProtectProc=:
+# whether a caller descends from the shell pidvault names is read from its /proc entries.
 
 [Install]
 WantedBy=multi-user.target

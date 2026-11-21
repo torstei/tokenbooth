@@ -2,16 +2,19 @@
 //! knows each caller by the kernel's credentials for the connection.
 
 use std::fs::DirBuilder;
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use serde_json::json;
+use serde_json::{Value, json};
 
-use crate::frame;
+use crate::frame::{self, Message};
+use crate::pidvault::{self, Unlocked};
 use crate::procs::{self, PeerCred, Pidfd};
+use crate::profile::{Profile, Store};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -19,6 +22,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct Config {
     /// Holds one directory per caller's uid.
     pub state: PathBuf,
+    /// A passed connection must lead to this pidvault.
+    pub pidvault: pidvault::Pidvault,
 }
 
 pub fn run(listener: UnixListener, config: Config) -> Result<()> {
@@ -56,26 +61,86 @@ impl Caller {
         }
         Ok(())
     }
+
+    /// Asks pidvault, over the connection the caller passed, which vaults its shell has
+    /// unlocked. Every request that touches profiles or logins needs this.
+    fn unlocked(&self, mut fds: Vec<OwnedFd>, config: &Config) -> Result<Unlocked> {
+        if fds.len() != 1 {
+            bail!("pass exactly one fd with the request: a connection to pidvault");
+        }
+        let unlocked = pidvault::ask(fds.remove(0), self.cred, &config.pidvault)?;
+        self.still_there()?;
+        Ok(unlocked)
+    }
+}
+
+fn text<'a>(request: &'a Message, key: &str) -> Result<&'a str> {
+    request.get(key).and_then(Value::as_str).with_context(|| format!("the request lacks {key}"))
 }
 
 fn serve(stream: &UnixStream, config: &Config) -> Result<()> {
     let caller = Caller::of(stream)?;
     stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
-    let Some((request, _fds)) = frame::receive(stream)? else {
+    let Some((request, fds)) = frame::receive(stream)? else {
         return Ok(());
     };
-    match request["type"].as_str() {
+    let state = state_dir(&config.state, caller.cred.uid)?;
+    let reply = match request["type"].as_str() {
         Some("status") => {
-            let state = state_dir(&config.state, caller.cred.uid)?;
+            let vaults = if fds.is_empty() {
+                Value::Null
+            } else {
+                json!(caller.unlocked(fds, config)?.0.keys().collect::<Vec<_>>())
+            };
             caller.still_there()?;
-            frame::send(
-                stream,
-                &json!({"type": "status", "uid": caller.cred.uid, "pid": caller.cred.pid, "state": state}),
-                &[],
-            )
+            json!({"type": "status", "uid": caller.cred.uid, "pid": caller.cred.pid, "state": state,
+                   "unlocked": vaults})
+        }
+        Some("profile-list") => {
+            let unlocked = caller.unlocked(fds, config)?;
+            let store = Store::open(&state)?;
+            let mut profiles = Vec::new();
+            for name in store.names()? {
+                if let Ok(Some((_, profile))) = store.load(&name)
+                    && unlocked.0.contains_key(&profile.vault)
+                {
+                    profiles.push(json!({"name": name, "vault": profile.vault}));
+                }
+            }
+            json!({"type": "profiles", "profiles": profiles})
+        }
+        Some("profile-show") => {
+            let unlocked = caller.unlocked(fds, config)?;
+            let name = text(&request, "name")?;
+            let (text, profile) = Store::open(&state)?.load(name)?.with_context(|| format!("no profile {name:?}"))?;
+            unlocked.require(&profile.vault)?;
+            json!({"type": "profile", "name": name, "toml": text})
+        }
+        Some("profile-set") => {
+            let unlocked = caller.unlocked(fds, config)?;
+            let name = text(&request, "name")?;
+            let toml = text(&request, "toml")?;
+            let profile = Profile::parse(toml)?;
+            unlocked.require(&profile.vault)?;
+            let store = Store::open(&state)?;
+            if let Some((_, old)) = store.load(name)? {
+                unlocked.require(&old.vault)?;
+            }
+            store.save(name, toml)?;
+            json!({"type": "ok"})
+        }
+        Some("profile-delete") => {
+            let unlocked = caller.unlocked(fds, config)?;
+            let name = text(&request, "name")?;
+            let store = Store::open(&state)?;
+            let (_, profile) = store.load(name)?.with_context(|| format!("no profile {name:?}"))?;
+            unlocked.require(&profile.vault)?;
+            store.delete(name)?;
+            json!({"type": "ok"})
         }
         other => bail!("unknown request {other:?}"),
-    }
+    };
+    frame::send(stream, &reply, &[])
 }
 
 /// The caller's own directory under the state root, created on first use, readable by the

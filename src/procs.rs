@@ -84,3 +84,70 @@ pub fn harden() -> io::Result<()> {
     }
     Ok(())
 }
+
+pub fn parent_of(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // comm may itself contain ") ", so split after the last one; the parent follows the state
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(1)?.parse().ok()
+}
+
+pub fn real_uid_of(pid: u32) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status.lines().find_map(|l| l.strip_prefix("Uid:"))?.split_whitespace().next()?.parse().ok()
+}
+
+/// Whether `ancestor` is `pid` or one of its ancestors.
+pub fn descends_from(pid: u32, ancestor: u32) -> bool {
+    let mut current = pid;
+    for _ in 0..1024 {
+        if current == ancestor {
+            return true;
+        }
+        match parent_of(current) {
+            Some(parent) if parent != 0 && parent != current => current = parent,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The uid of the account `name`, if it has a passwd entry.
+pub fn uid_of_user(name: &str) -> Option<u32> {
+    let name = std::ffi::CString::new(name).ok()?;
+    let mut buf = vec![0 as libc::c_char; 16 * 1024];
+    // SAFETY: passwd is plain data, for which all zeros is a valid value
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: name, pwd, buf and result outlive the call and buf.len() is buf's size; pwd's
+    // string pointers into buf are never read
+    let rc = unsafe { libc::getpwnam_r(name.as_ptr(), &mut pwd, buf.as_mut_ptr(), buf.len(), &mut result) };
+    if rc != 0 || result.is_null() {
+        return None;
+    }
+    Some(pwd.pw_uid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn this_process_descends_from_its_parent_and_itself_but_not_a_child() {
+        let me = std::process::id();
+        let parent = parent_of(me).unwrap();
+        assert!(descends_from(me, me));
+        assert!(descends_from(me, parent));
+        let mut child = std::process::Command::new("sleep").arg("5").spawn().unwrap();
+        assert!(!descends_from(me, child.id()));
+        assert!(descends_from(child.id(), me));
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn root_is_uid_0() {
+        assert_eq!(uid_of_user("root"), Some(0));
+        assert_eq!(uid_of_user("no-such-user-here"), None);
+    }
+}
