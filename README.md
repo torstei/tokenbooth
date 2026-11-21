@@ -59,8 +59,9 @@ calling shell.
 
 `systemd/install.sh` (with sudo) installs the daemon as the `tokenbooth` system user, copied
 root-owned to `/usr/local/bin/tokenbooth`, and a socket-activated unit that runs each booth as
-a fresh dynamic user with no access to your home directory, serving the booth's code in this
-checkout read-only. Only the daemon may start booths.
+a fresh dynamic user with no access to your home directory, from a root-owned copy of the
+booth's code in `/usr/local/lib/tokenbooth`. Rerun it after changing the booth. Only the daemon
+may start booths.
 
 ```sh
 cargo build --release

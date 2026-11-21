@@ -571,7 +571,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 1.3 | Framed request and response on an fd instead of argv, files and stdout | The format is written down ([the booth protocol](docs/booth-protocol.md)) and both ends of the tests use it |
 | 1.4 | Refuses to start without Wayland, so never on X11 | |
 | 1.5 | The current CLI becomes a thin wrapper around the booth | `tokenbooth get gopro` works as before |
-| 2 | **The booth as a dynamic uid** (S1, S2, S5): `systemd/`, the code bound read-only from a checkout until step 4; the caller passes its Wayland connection with the request | Step 1's booth runs as `tokenbooth-booth@` |
+| 2 | **The booth as a dynamic uid** (S1, S2, S5): `systemd/`, the code copied root-owned to `/usr/local/lib/tokenbooth`; the caller passes its Wayland connection with the request | Step 1's booth runs as `tokenbooth-booth@` |
 | 3 | **Daemon and client**, in Rust | |
 | 3.1 | Socket, `SO_PEERCRED` and `SO_PEERPIDFD`, state under `/var/lib/tokenbooth/<uid>/`; the client and daemon are one binary, `tokenbooth`, as pidvault is | `tokenbooth status` reports the caller the kernel saw |
 | 3.2 | The pidvault check (S4); profiles change only through checked requests: `tokenbooth profile set\|show\|list\|delete`, each against the profile's vault | Outside an unlocked shell, no profile can be read, listed or changed |
