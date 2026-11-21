@@ -1,0 +1,12 @@
+[Unit]
+Description=tokenbooth daemon socket
+
+[Socket]
+ListenStream=/run/tokenbooth/sock
+# everyone may connect; the daemon tells callers apart by their credentials
+SocketMode=0666
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

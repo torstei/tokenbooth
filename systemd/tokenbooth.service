@@ -1,0 +1,51 @@
+[Unit]
+Description=tokenbooth daemon: logins for unlocked shells
+Requires=tokenbooth.socket
+After=tokenbooth.socket systemd-sysusers.service
+
+[Service]
+Type=exec
+User=tokenbooth
+Group=tokenbooth
+ExecStart=/usr/local/bin/tokenbooth daemon
+Restart=on-failure
+
+StateDirectory=tokenbooth
+StateDirectoryMode=0700
+UMask=0077
+LimitCORE=0
+# kept cookies being decrypted and tokens in transit never reach swap
+MemorySwapMax=0
+
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateIPC=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+# Not PrivateUsers=: callers are identified by uid, which it would remap.
+
+[Install]
+WantedBy=multi-user.target

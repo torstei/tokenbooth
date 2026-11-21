@@ -1,4 +1,4 @@
-"""tokenbooth: log in to a site in a locked-down browser window and print the token it leaves behind.
+"""tokenbooth-dev: log in to a site in a locked-down browser window and print the token it leaves behind.
 
 Exit status: 0 token printed, 1 window closed without a token, 2 usage error, 3 timed out.
 """
@@ -51,7 +51,7 @@ def common_options(p: argparse.ArgumentParser, suppress: bool) -> None:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="tokenbooth", description=__doc__,
+    parser = argparse.ArgumentParser(prog="tokenbooth-dev", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     common_options(parser, suppress=False)
     # SUPPRESS keeps a subcommand that was not given the option from resetting the top-level value

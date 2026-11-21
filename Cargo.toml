@@ -1,0 +1,21 @@
+[package]
+name = "tokenbooth"
+version = "0.1.0"
+edition = "2024"
+description = "Log in to a site in a locked-down browser and hand the token to an unlocked shell"
+license = "Apache-2.0"
+authors = ["Torstein Tauno Svendsen <torstei@gmail.com>"]
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

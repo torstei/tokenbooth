@@ -1,6 +1,8 @@
 # tokenbooth
 
 Log in to a site in a locked-down browser window and print the token it leaves behind.
+`tokenbooth-dev` does it as you, from this checkout; `tokenbooth`, with its daemon, is what it is
+becoming.
 Prototype — see [DESIGN.md](DESIGN.md) for what it is meant to become.
 
 ## Setup
@@ -18,13 +20,13 @@ python3 -m venv .venv
 
 ```sh
 # ad hoc: open the login page, print the cookie once it appears
-.venv/bin/tokenbooth get gopro --url https://gopro.com/login --cookie gp_access_token
+.venv/bin/tokenbooth-dev get gopro --url https://gopro.com/login --cookie gp_access_token
 
 # or with a profile in <home>/profiles/gopro.toml (see examples/)
-.venv/bin/tokenbooth get gopro            # cached token if still valid, else the window
-.venv/bin/tokenbooth login gopro          # always the window
-.venv/bin/tokenbooth forget gopro         # drop the cached token and kept cookies
-.venv/bin/tokenbooth keep-set gopro       # list the kept cookies (never their values)
+.venv/bin/tokenbooth-dev get gopro            # cached token if still valid, else the window
+.venv/bin/tokenbooth-dev login gopro          # always the window
+.venv/bin/tokenbooth-dev forget gopro         # drop the cached token and kept cookies
+.venv/bin/tokenbooth-dev keep-set gopro       # list the kept cookies (never their values)
 ```
 
 Each run starts with an empty browser.
@@ -37,7 +39,7 @@ For a new site, let tokenbooth find the cookie: sign in by hand, close the windo
 with the login. Ctrl-C gives up without one.
 
 ```sh
-.venv/bin/tokenbooth discover github --url https://github.com/login --via google > github.toml
+.venv/bin/tokenbooth-dev discover github --url https://github.com/login --via google > github.toml
 ```
 
 `-v` logs navigations (without query strings) and cookie names (without values) to stderr —
@@ -48,22 +50,30 @@ vault to keep the kept cookies and tokens out of reach of everything but unlocke
 
 The window opens only on Wayland; on X11, where any client can read what is typed, it refuses.
 
-### The booth as a user of its own
+### The daemon, and the booth as a user of its own
 
-`systemd/install.sh` (with sudo) installs a socket-activated unit that runs each booth as a
-fresh dynamic user, with no access to your home directory, serving the code in this checkout
-read-only. Point the CLI at it, and it passes the booth a connection to your Wayland display
-with the request:
+`tokenbooth` (Rust, in this repository's root) is the client and, as `tokenbooth daemon`, the
+daemon that will hold profiles, kept cookies and tokens for shells pidvault has unlocked. It is
+being built ([DESIGN.md](DESIGN.md#steps), step 3); so far `tokenbooth status` shows who the
+daemon takes you to be.
+
+`systemd/install.sh` (with sudo) installs the daemon as the `tokenbooth` system user, copied
+root-owned to `/usr/local/bin/tokenbooth`, and a socket-activated unit that runs each booth as
+a fresh dynamic user with no access to your home directory, serving the booth's code in this
+checkout read-only. `tokenbooth-dev` can use that unit: it passes the booth a connection to your
+Wayland display with the request.
 
 ```sh
+cargo build --release
 sudo systemd/install.sh                       # sudo systemd/install.sh remove  to take it out
-export TOKENBOOTH_BOOTH_SOCKET=/run/tokenbooth/booth.sock     # or --booth-socket PATH
-.venv/bin/tokenbooth login gopro
+tokenbooth status
+TOKENBOOTH_BOOTH_SOCKET=/run/tokenbooth/booth.sock .venv/bin/tokenbooth-dev login gopro
 ```
 
-The unit runs Google Chrome only. Its log is in `journalctl -u 'tokenbooth-booth@*'`.
+The booth unit runs Google Chrome only. The logs are in `journalctl -u tokenbooth -u 'tokenbooth-booth@*'`.
 
-Exit status: 0 token printed, 1 window closed without one, 2 usage error or refused, 3 timed out.
+The `tokenbooth-dev` exit status: 0 token printed, 1 window closed without one, 2 usage error
+or refused, 3 timed out.
 
 ## License
 

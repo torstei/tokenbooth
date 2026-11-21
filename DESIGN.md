@@ -92,11 +92,11 @@ user_agent      = ""        # override; default is the engine's own (Qt's withou
 timeout         = 600
 ```
 
-Every key can also be given on the command line, so `tokenbooth get foo --url https://… --cookie x`
+Every key can also be given on the command line, so `tokenbooth-dev get foo --url https://… --cookie x`
 works with no profile file. Without `allowed_hosts`, the start URL's host and its subdomains
 are allowed.
 
-`tokenbooth discover NAME --url … [--via …]` finds the cookie for a new site. You sign in by
+`tokenbooth-dev discover NAME --url … [--via …]` finds the cookie for a new site. You sign in by
 hand and close the window (with Qt, press **I'm logged in**; there, Cancel or closing the window
 suggests nothing); it lists the cookies on the start URL's site (the host without
 `www.`, and without its first label when three or more remain) in the order they appeared,
@@ -113,7 +113,7 @@ domain without the leading dot, so `*@google.com` keeps every `.google.com` cook
 them and seeded into the next run's cookie store before its first navigation; a host-only
 cookie is seeded for its host, since a `__Host-` cookie given a domain is refused. The token
 cookie itself is never kept. `--keep` on the command line replaces the profile's list, and
-`tokenbooth keep-set NAME` lists what is kept, without values.
+`tokenbooth-dev keep-set NAME` lists what is kept, without values.
 
 ## Locking the window down
 
@@ -493,7 +493,7 @@ something that runs. Steps 1 and 3 can proceed in parallel once the booth's requ
 (1.3) is fixed; the daemon is built against a stub booth until then.
 
 The booth stays runnable on its own, as the user and without the daemon, the socket or a
-dynamic uid: `tokenbooth login` and `tokenbooth discover` from a checkout. That is how sites
+dynamic uid: `tokenbooth-dev login` and `tokenbooth-dev discover` from a checkout. That is how sites
 are explored, keep-sets narrowed and the booth tested, with the prototype's guarantees and
 none of the [security model](#security-model)'s; nothing a run like that holds should be
 trusted to it.
@@ -552,7 +552,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 1.5 | The current CLI becomes a thin wrapper around the booth | `tokenbooth get gopro` works as before |
 | 2 | **The booth as a dynamic uid** (S1, S2, S5): `systemd/`, the code bound read-only from a checkout until step 4; the caller passes its Wayland connection with the request | Step 1's booth runs as `tokenbooth-booth@` |
 | 3 | **Daemon and client**, in Rust | |
-| 3.1 | Socket, `SO_PEERCRED` and `SO_PEERPIDFD`, state under `/var/lib/tokenbooth/<uid>/` | |
+| 3.1 | Socket, `SO_PEERCRED` and `SO_PEERPIDFD`, state under `/var/lib/tokenbooth/<uid>/`; the client and daemon are one binary, `tokenbooth`, as pidvault is | `tokenbooth status` reports the caller the kernel saw |
 | 3.2 | The pidvault check (S4); profiles change only through checked requests | |
 | 3.3 | Keep-set encrypted with the key from the vault; the token cache | |
 | 3.4 | Token delivery: over the socket, into a vault file, on stdout | |

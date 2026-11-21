@@ -16,7 +16,7 @@ qt = ["PySide6-Essentials>=6.8", "PySide6-WebEngine"]
 test = ["pytest"]
 
 [project.scripts]
-tokenbooth = "tokenbooth.cli:main"
+tokenbooth-dev = "tokenbooth.cli:main"
 
 [tool.setuptools]
 packages = ["tokenbooth", "tokenbooth.engines"]
