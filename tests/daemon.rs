@@ -352,3 +352,22 @@ fn a_profile_whose_vault_is_gone_can_be_deleted_but_one_in_a_locked_vault_cannot
     s.answer(r#"{"ok":true,"message":"","vaults":[]}"#.into());
     s.ok(&["profile", "delete", "w"], "");
 }
+
+#[test]
+fn to_vault_writes_the_token_into_the_profiles_vault_and_prints_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup();
+    s.ok(&["profile", "set", "gopro", "-"], KEPT);
+    s.booth_says(vec![token_result("tok-1")]);
+    for _ in 0..2 {
+        let output = s.run(&["get", "--to-vault", "gopro"], "");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(output.stdout.is_empty());
+        let file = s.dir.path().join("mount/stored/default/tokens/gopro");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "tok-1\n");
+        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_file(&file).unwrap();
+    }
+    assert_eq!(s.booth_heard().len(), 1, "the second get was answered from the cache");
+    assert!(!s.run(&["get", "--to-vault", "--json", "gopro"], "").status.success());
+}

@@ -70,7 +70,12 @@ tokenbooth profile set gopro examples/gopro.toml
 tokenbooth get gopro                          # cached token if still valid, else the window
 tokenbooth login gopro -v                     # always the window, logging navigations
 tokenbooth forget gopro                       # drop the cached token and kept cookies
+tokenbooth get gopro --to-vault               # write it to /run/pidvault/stored/<vault>/tokens/gopro
 ```
+
+A token on stdout passes through a pipe, which any of your processes can open while it is in
+flight. `--to-vault` puts it in the profile's vault instead, readable only by processes the
+vault is unlocked for; that is the place for a program to read it from.
 
 The daemon keeps each profile's token and kept cookies sealed with a key it never stores: the
 key is in your vault, at `/run/pidvault/stored/<vault>/tokenbooth/<profile>.key`, made on first

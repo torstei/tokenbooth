@@ -55,8 +55,12 @@ struct LoginArgs {
     #[arg(short, long)]
     verbose: bool,
     /// Print {"token": ..., "expires": ...} instead of the bare token
-    #[arg(long)]
+    #[arg(long, conflicts_with = "to_vault")]
     json: bool,
+    /// Write the token to tokens/NAME in the profile's vault instead of printing it, where only
+    /// processes the vault is unlocked for can read it
+    #[arg(long)]
+    to_vault: bool,
 }
 
 #[derive(Subcommand)]
@@ -256,11 +260,14 @@ fn login(cli: &Cli, args: &LoginArgs, refresh: bool) -> Result<ExitCode> {
     let fds: Vec<_> = [Some(vault.as_raw_fd()), display.as_ref().map(AsRawFd::as_raw_fd)].into_iter().flatten().collect();
     frame::send(&stream, &json!({"type": "login", "name": args.name, "refresh": refresh, "log": args.verbose}), &fds)?;
     drop((vault, display));
+    let mut vault_name = None;
     loop {
         let (reply, _) = frame::receive(&stream)?.context("the daemon closed the connection without a result")?;
         match reply["type"].as_str() {
             Some("need-key") => {
-                let key = profile_key(cli, reply["vault"].as_str().unwrap_or_default(), &args.name)?;
+                let vault = reply["vault"].as_str().unwrap_or_default().to_owned();
+                let key = profile_key(cli, &vault, &args.name)?;
+                vault_name = Some(vault);
                 frame::send(&stream, &json!({"type": "key", "key": key.as_str()}), &[])?;
             }
             Some("log") => eprintln!("tokenbooth: {}", reply["text"].as_str().unwrap_or_default()),
@@ -268,7 +275,11 @@ fn login(cli: &Cli, args: &LoginArgs, refresh: bool) -> Result<ExitCode> {
             Some("result") => {
                 return Ok(match (reply["outcome"].as_str(), reply["token"].as_str()) {
                     (Some("token"), Some(token)) => {
-                        if args.json {
+                        if args.to_vault {
+                            let vault = vault_name.as_deref().context("the daemon never named the profile's vault")?;
+                            let path = write_to_vault(cli, vault, &args.name, token)?;
+                            eprintln!("tokenbooth: token written to {}", path.display());
+                        } else if args.json {
                             println!("{}", json!({"token": token, "expires": reply["expires"]}));
                         } else {
                             println!("{token}");
@@ -288,6 +299,31 @@ fn login(cli: &Cli, args: &LoginArgs, refresh: bool) -> Result<ExitCode> {
             other => bail!("unexpected reply {other:?}"),
         }
     }
+}
+
+/// Writes the token to tokens/NAME in the vault, whole or not at all.
+fn write_to_vault(cli: &Cli, vault: &str, name: &str, token: &str) -> Result<PathBuf> {
+    profile::check_name("vault", vault)?;
+    profile::check_name("profile", name)?;
+    let dir = cli.pidvault_mount.join("stored").join(vault).join("tokens");
+    match DirBuilder::new().mode(0o700).create(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e).with_context(|| format!("cannot create {}", dir.display())),
+    }
+    let path = dir.join(name);
+    let partial = dir.join(format!(".{name}.new"));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&partial)
+        .with_context(|| format!("cannot write {}", partial.display()))?;
+    file.write_all(format!("{token}\n").as_bytes())?;
+    file.sync_all()?;
+    std::fs::rename(&partial, &path).with_context(|| format!("cannot write {}", path.display()))?;
+    Ok(path)
 }
 
 fn forget(cli: &Cli, name: &str) -> Result<()> {
