@@ -8,6 +8,7 @@ mod procs;
 mod profile;
 mod sealed;
 mod systemd;
+mod trust;
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{Read, Write};
@@ -148,9 +149,16 @@ fn run_daemon(
 
 /// Sends `request` with, when `pidvault` is set, a fresh connection to pidvault: the daemon
 /// asks over it, and pidvault answers for this process, which opened it.
-fn call(cli: &Cli, request: &Value, pidvault: bool) -> Result<frame::Message> {
+/// A connection to the daemon, refused unless it is the daemon (see trust.rs).
+fn connect_daemon(cli: &Cli) -> Result<UnixStream> {
     let socket = &cli.socket;
     let stream = UnixStream::connect(socket).with_context(|| format!("cannot reach the daemon at {}", socket.display()))?;
+    trust::check(&stream).with_context(|| format!("refusing the daemon at {}", socket.display()))?;
+    Ok(stream)
+}
+
+fn call(cli: &Cli, request: &Value, pidvault: bool) -> Result<frame::Message> {
+    let stream = connect_daemon(cli)?;
     let vault = if pidvault { Some(connect_pidvault(&cli.pidvault_socket)?) } else { None };
     let fds: Vec<_> = vault.iter().map(AsRawFd::as_raw_fd).collect();
     frame::send(&stream, request, &fds)?;
@@ -254,7 +262,7 @@ fn profile_key(cli: &Cli, vault: &str, name: &str) -> Result<zeroize::Zeroizing<
 }
 
 fn login(cli: &Cli, args: &LoginArgs, refresh: bool) -> Result<ExitCode> {
-    let stream = UnixStream::connect(&cli.socket).with_context(|| format!("cannot reach the daemon at {}", cli.socket.display()))?;
+    let stream = connect_daemon(cli)?;
     let vault = connect_pidvault(&cli.pidvault_socket)?;
     let display = wayland_connection();
     let fds: Vec<_> = [Some(vault.as_raw_fd()), display.as_ref().map(AsRawFd::as_raw_fd)].into_iter().flatten().collect();

@@ -219,8 +219,11 @@ makes none of the claims below.
 - **The daemon** is small and long-lived (Rust, like pidvault). It owns the stored state and
   profiles, authenticates callers by the kernel's credentials and a pidfd, and has pidvault
   say whether the caller's shell is unlocked (see [Asking pidvault](#asking-pidvault)). The
-  client trusts the daemon only if it runs as another uid behind a root-owned socket
-  directory, as pidvault's client does.
+  client trusts the daemon, before handing it a key from the vault, only if the listening
+  socket is the `tokenbooth` account's, or root's bound in a directory only root can write.
+  Socket-activated, the listener is systemd's, so the client cannot ask for the daemon's own
+  uid; it judges the listener's bound address, not the path it connected through, so a
+  `TOKENBOOTH_SOCKET` pointed elsewhere or a symlink swapped underneath gains nothing.
 - **The booth** is a browser, Google Chrome — the largest attack surface by far — so it gets
   nothing it can keep. Each run is an instance of a socket-activated unit with `DynamicUser=yes`
   (`Accept=yes`, on a socket only the daemon can connect to): a uid of its own that owns
@@ -574,7 +577,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 3.2 | The pidvault check (S4); profiles change only through checked requests: `tokenbooth profile set\|show\|list\|delete`, each against the profile's vault | Outside an unlocked shell, no profile can be read, listed or changed |
 | 3.3 | Keep-set encrypted with the key from the vault; the token cache: one blob per profile, XChaCha20-Poly1305 bound to the uid and profile name, under a per-profile key the client keeps in the vault; the daemon runs logins through the booth unit, whose socket becomes the daemon's alone | `tokenbooth get gopro` answers from the sealed state, or through a booth seeded with the sealed keep-set |
 | 3.4 | Token delivery: over the socket, into a vault file (`--to-vault`: `tokens/<profile>` in the profile's vault), on stdout | `tokenbooth get gopro --to-vault` leaves the token in the vault and prints nothing |
-| 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory | |
+| 3.5 | The client refuses a daemon of its own uid or outside a root-owned socket directory; tests reach a daemon of their own uid through a variable only a debug build reads | A daemon running as the owner is refused before the key is sent |
 | 4 | **Packaging**: `.deb`, sysusers, the socket and `DynamicUser` template units with `ProtectHome=yes`, the booth executable `/usr/lib/tokenbooth/booth` and its AppArmor profile, Google Chrome as the engine (P3, [S5](#spikes-first)) | A clean VM installs it, `tokenbooth get gopro` works, and the renderer has its own PID namespace |
 | 5 | **pidvault**: `status` and `unlocked_by` documented as a contract with a test; the control-socket peer held by pidfd | |
 | 6 | **mushcam** reads the token from a vault file or through a small socket library | `mushcam` no longer asks for a pasted cookie |

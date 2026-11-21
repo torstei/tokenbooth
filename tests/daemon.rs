@@ -98,6 +98,7 @@ fn setup() -> Setup {
 impl Setup {
     fn run(&self, args: &[&str], stdin: &str) -> Output {
         let mut child = Command::new(BIN)
+            .env("TOKENBOOTH_INSECURE_ALLOW_SAME_UID_DAEMON", "1")
             .env("TOKENBOOTH_SOCKET", self.dir.path().join("sock"))
             .env("PIDVAULT_SOCKET", self.dir.path().join("pidvault.sock"))
             .env("PIDVAULT_MOUNT", self.dir.path().join("mount"))
@@ -327,6 +328,7 @@ fn without_a_display_only_a_cached_token_is_answered() {
     s.ok(&["profile", "set", "gopro", "-"], KEPT);
     let headless = |args: &[&str]| {
         Command::new(BIN)
+            .env("TOKENBOOTH_INSECURE_ALLOW_SAME_UID_DAEMON", "1")
             .env("TOKENBOOTH_SOCKET", s.dir.path().join("sock"))
             .env("PIDVAULT_SOCKET", s.dir.path().join("pidvault.sock"))
             .env("PIDVAULT_MOUNT", s.dir.path().join("mount"))
@@ -370,4 +372,21 @@ fn to_vault_writes_the_token_into_the_profiles_vault_and_prints_nothing() {
     }
     assert_eq!(s.booth_heard().len(), 1, "the second get was answered from the cache");
     assert!(!s.run(&["get", "--to-vault", "--json", "gopro"], "").status.success());
+}
+
+#[test]
+fn the_client_refuses_a_daemon_of_its_own_user_before_sending_anything() {
+    let s = setup();
+    s.ok(&["profile", "set", "gopro", "-"], KEPT);
+    let output = Command::new(BIN)
+        .env_remove("TOKENBOOTH_INSECURE_ALLOW_SAME_UID_DAEMON")
+        .env("TOKENBOOTH_SOCKET", s.dir.path().join("sock"))
+        .env("PIDVAULT_SOCKET", s.dir.path().join("pidvault.sock"))
+        .env("PIDVAULT_MOUNT", s.dir.path().join("mount"))
+        .args(["get", "gopro"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("runs as your own user"));
+    assert!(!s.dir.path().join("mount/stored/default/tokenbooth/gopro.key").exists(), "a key was made for a refused daemon");
 }
