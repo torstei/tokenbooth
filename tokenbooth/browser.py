@@ -3,7 +3,7 @@
 import base64
 import os
 import re
-import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from tokenbooth.discover import Recorder
@@ -19,7 +19,7 @@ def harden_environment() -> None:
 harden_environment()
 
 import shiboken6  # noqa: E402
-from PySide6.QtCore import Qt, QTimer, QUrl  # noqa: E402
+from PySide6.QtCore import QSocketNotifier, Qt, QTimer, QUrl  # noqa: E402
 from PySide6.QtNetwork import QNetworkCookie  # noqa: E402
 from PySide6.QtWebEngineCore import (  # noqa: E402
     QWebEnginePage,
@@ -159,7 +159,7 @@ class LoginWindow(QMainWindow):
             self.session.main_url_changed(url)
 
     def load_finished(self, ok: bool) -> None:
-        if self.session.verbose and not self.popup:
+        if self.session.logger and not self.popup:
             self.page.runJavaScript(
                 "JSON.stringify({webdriver: navigator.webdriver,"
                 " brands: navigator.userAgentData && navigator.userAgentData.brands})",
@@ -176,11 +176,11 @@ class LoginWindow(QMainWindow):
 
 
 class Session:
-    def __init__(self, app: QApplication, profile: Profile, keep: list[dict], verbose: bool,
-                 recorder: Recorder | None = None):
+    def __init__(self, app: QApplication, profile: Profile, keep: list[dict],
+                 log: Callable[[str], None] | None = None, recorder: Recorder | None = None):
         self.app = app
         self.profile = profile
-        self.verbose = verbose
+        self.logger = log
         self.recorder = recorder
         self.outcome = Outcome()
         self.seed = keep
@@ -236,8 +236,8 @@ class Session:
             QTimer.singleShot(profile.timeout * 1000, self.time_out)
 
     def log(self, message: str) -> None:
-        if self.verbose:
-            print(f"tokenbooth: {message}", file=sys.stderr, flush=True)
+        if self.logger:
+            self.logger(message)
 
     def allowed(self, url: QUrl) -> bool:
         if url.toString() == "about:blank":
@@ -371,12 +371,16 @@ class Session:
         shiboken6.delete(self.qprofile)
 
 
-def run(profile: Profile, keep: list[dict], verbose: bool,
-        recorder: Recorder | None = None) -> tuple[Outcome, list[dict]]:
-    app = QApplication([sys.argv[0]])
+def run(profile: Profile, keep: list[dict], log: Callable[[str], None] | None = None,
+        recorder: Recorder | None = None, hangup: int | None = None) -> tuple[Outcome, list[dict]]:
+    """One login. When `hangup` becomes readable, the caller has gone and the run ends."""
+    app = QApplication(["tokenbooth"])
     app.setApplicationName("tokenbooth")
     app.setDesktopFileName("tokenbooth")
-    session = Session(app, profile, keep, verbose, recorder)
+    session = Session(app, profile, keep, log, recorder)
+    if hangup is not None:
+        notifier = QSocketNotifier(hangup, QSocketNotifier.Type.Read)
+        notifier.activated.connect(lambda: (notifier.setEnabled(False), app.quit()))
     session.start()
     app.exec()
     outcome, kept = session.outcome, session.keep_set()

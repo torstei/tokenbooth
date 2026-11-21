@@ -77,7 +77,7 @@ def main(user_agent: str) -> None:
     app = QApplication([sys.argv[0]])
     profile = Profile(name="t", start_url="https://example.invalid/", cookie="token",
                       cookie_domain="example.invalid", user_agent=user_agent)
-    session = browser.Session(app, profile, [], verbose=False)
+    session = browser.Session(app, profile, [])
     page = QWebEnginePage(session.qprofile)
     result = {}
 

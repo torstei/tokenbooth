@@ -534,7 +534,7 @@ Each of these could change the plan, so each is settled before the code that dep
 | 1 | **The booth on its own**, still run as the user | |
 | 1.1 | Off-the-record profile only; `persist_session` and `<home>/sessions` go | GoPro login works with no files written but the token |
 | 1.2 | Keep-set in through `setCookie`, out through `cookieAdded`, filtered by `keep_cookies` | S3 answered with the booth itself |
-| 1.3 | Framed request and response on an fd instead of argv, files and stdout | The format is written down and both ends of the tests use it |
+| 1.3 | Framed request and response on an fd instead of argv, files and stdout | The format is written down ([the booth protocol](docs/booth-protocol.md)) and both ends of the tests use it |
 | 1.4 | Refuses to start without Wayland, so never on X11 | |
 | 1.5 | The current CLI becomes a thin wrapper around the booth | `tokenbooth get gopro` works as before |
 | 2 | **The booth as a dynamic uid** (S1, S2) | Step 1's booth runs as `tokenbooth-booth@` |

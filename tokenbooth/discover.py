@@ -56,6 +56,15 @@ class Recorder:
         self.first_page: tuple[str, str] | None = None
         self.departed = False
 
+    @classmethod
+    def from_cookies(cls, cookies: list[dict]) -> "Recorder":
+        """A recorder holding what a booth reported, for the report on the caller's side."""
+        recorder = cls()
+        for entry in cookies:
+            seen = Seen(**entry)
+            recorder.cookies[(seen.name, seen.domain, seen.path)] = seen
+        return recorder
+
     def navigated(self, host: str, path: str) -> None:
         if self.first_page is None:
             self.first_page = (host, path)

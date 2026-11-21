@@ -57,7 +57,7 @@ def main() -> None:
     app = QApplication([sys.argv[0]])
     profile = Profile(name="t", start_url="https://example.invalid/", cookie="token",
                       cookie_domain="gopro.com", keep_cookies=PATTERNS)
-    session = browser.Session(app, profile, json.load(sys.stdin), verbose=False)
+    session = browser.Session(app, profile, json.load(sys.stdin))
     loaded = []
     session.load_start_url = lambda: (loaded.append(sorted(session.unconfirmed)), QTimer.singleShot(0, app.quit))
     QTimer.singleShot(5000, app.quit)

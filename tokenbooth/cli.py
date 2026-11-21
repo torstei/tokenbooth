@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from tokenbooth import store
+from tokenbooth import protocol, store
 from tokenbooth.discover import Recorder, describe, site_of, suggest_profile, tied
 
 EXIT_OK, EXIT_CANCELLED, EXIT_USAGE, EXIT_TIMEOUT = 0, 1, 2, 3
@@ -117,30 +117,35 @@ def main(argv: list[str] | None = None) -> int:
             emit(token, None, args.json)
             return EXIT_OK
 
-        from tokenbooth import browser
-        recorder = Recorder() if discovering else None
-        outcome, kept = browser.run(profile, store.load_keep(home, profile.name), args.verbose, recorder)
+        request = protocol.Request(mode="discover" if discovering else "login", profile=profile,
+                                   keep=store.load_keep(home, profile.name), log=args.verbose)
+        result = protocol.run_booth(request, on_log=lambda text: print(f"tokenbooth: {text}", file=sys.stderr,
+                                                                       flush=True))
     except store.UsageError as e:
         print(f"tokenbooth: {e}", file=sys.stderr)
         return EXIT_USAGE
-    except ImportError as e:
+    except protocol.ProtocolError as e:
         print(f"tokenbooth: {e}", file=sys.stderr)
         return EXIT_USAGE
 
+    if result.outcome == "refused":
+        print(f"tokenbooth: the booth refused: {result.error}", file=sys.stderr)
+        return EXIT_USAGE
     if profile.keep_cookies:
-        store.save_keep(home, profile.name, kept)
+        store.save_keep(home, profile.name, result.keep)
         if args.verbose:
-            print(f"tokenbooth: kept {len(kept)} cookie(s): "
-                  + " ".join(f"{e['name']}@{e['domain']}" for e in kept), file=sys.stderr)
-    if recorder:
-        if not outcome.confirmed:
-            print("tokenbooth: timed out" if outcome.timed_out else
+            print(f"tokenbooth: kept {len(result.keep)} cookie(s): "
+                  + " ".join(f"{e['name']}@{e['domain']}" for e in result.keep), file=sys.stderr)
+    if discovering:
+        if result.outcome != "confirmed":
+            print("tokenbooth: timed out" if result.outcome == "timed_out" else
                   "tokenbooth: closed without confirming the login; nothing suggested", file=sys.stderr)
-            return EXIT_TIMEOUT if outcome.timed_out else EXIT_CANCELLED
-        return report_discovery(profile, recorder)
-    if outcome.token is None:
-        print("tokenbooth: timed out" if outcome.timed_out else "tokenbooth: closed without a token", file=sys.stderr)
-        return EXIT_TIMEOUT if outcome.timed_out else EXIT_CANCELLED
-    expires = store.save_token(home, profile.name, outcome.token, outcome.expires)
-    emit(outcome.token, expires, args.json)
+            return EXIT_TIMEOUT if result.outcome == "timed_out" else EXIT_CANCELLED
+        return report_discovery(profile, Recorder.from_cookies(result.cookies or []))
+    if result.outcome != "token":
+        print("tokenbooth: timed out" if result.outcome == "timed_out" else "tokenbooth: closed without a token",
+              file=sys.stderr)
+        return EXIT_TIMEOUT if result.outcome == "timed_out" else EXIT_CANCELLED
+    expires = store.save_token(home, profile.name, result.token, result.expires)
+    emit(result.token, expires, args.json)
     return EXIT_OK
