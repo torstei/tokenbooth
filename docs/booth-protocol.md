@@ -100,7 +100,7 @@ so a keep-set written by one engine is merely not seeded into another.
 | `confirmed` | `discover`: "I'm logged in" was pressed |
 | `cancelled` | the window was closed, or the caller hung up |
 | `timed_out` | `timeout` passed |
-| `refused` | the request was malformed, or the booth will not run, e.g. a debugging port is requested in its environment |
+| `refused` | the request was malformed, or the booth will not run, e.g. it has no Wayland display or a debugging port is requested in its environment |
 
 A `cookies` entry describes one cookie by `name`, `domain` and `path`:
 

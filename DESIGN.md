@@ -363,8 +363,8 @@ it holds an identity provider's session cookies, so does that file. Tokens leave
 It does keep the measures that carry over: it refuses to start when
 `QTWEBENGINE_REMOTE_DEBUGGING` is set, drops `QTWEBENGINE_CHROMIUM_FLAGS`, passes Qt no
 command-line arguments (any of these could open a debugging port onto the logged-in session),
-limits top-level navigation, and logs navigations without query or fragment and cookie names
-without values. Its Chromium sandbox is only half on: renderers get seccomp, but AppArmor
+draws only through Wayland, limits top-level navigation, and logs navigations without query
+or fragment and cookie names without values. Its Chromium sandbox is only half on: renderers get seccomp, but AppArmor
 refuses the venv's interpreter the user namespaces the namespace layer needs (see
 [Showing the window as another user](#showing-the-window-as-another-user)).
 

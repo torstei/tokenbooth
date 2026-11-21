@@ -40,7 +40,9 @@ the way to find out which hosts a new site needs: a navigation it blocks shows a
 State lives in `--home`, `$TOKENBOOTH_HOME` or `~/.local/share/tokenbooth`; point it into a pidvault
 vault to keep the kept cookies and tokens out of reach of everything but unlocked shells.
 
-Exit status: 0 token printed, 1 window closed without one, 2 usage error, 3 timed out.
+The window opens only on Wayland; on X11, where any client can read what is typed, it refuses.
+
+Exit status: 0 token printed, 1 window closed without one, 2 usage error or refused, 3 timed out.
 
 ## License
 

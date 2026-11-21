@@ -3,12 +3,46 @@ where systemd puts an accepted connection), then exits. See docs/booth-protocol.
 
 import os
 import socket
+import stat
 import sys
+from collections.abc import MutableMapping
 from dataclasses import asdict
+from pathlib import Path
 
 from tokenbooth import protocol
 from tokenbooth.protocol import ProtocolError, Request, Result
 from tokenbooth.store import UsageError
+
+
+def confine_display(environ: MutableMapping[str, str]) -> None:
+    """Lets Qt draw only through Wayland: on X11 every client can read the keystrokes typed
+    into the booth. `offscreen` draws nowhere and takes no input, and is what the tests use."""
+    platform = environ.get("QT_QPA_PLATFORM", "wayland")
+    if platform not in ("wayland", "offscreen"):
+        raise UsageError(f"QT_QPA_PLATFORM={platform}: the booth draws only through Wayland")
+    if platform == "wayland":
+        if "WAYLAND_SOCKET" in environ:
+            try:
+                is_socket = stat.S_ISSOCK(os.fstat(int(environ["WAYLAND_SOCKET"])).st_mode)
+            except (ValueError, OSError):
+                is_socket = False
+            if not is_socket:
+                raise UsageError("WAYLAND_SOCKET is not a connected socket")
+        else:
+            display = environ.get("WAYLAND_DISPLAY")
+            if not display:
+                raise UsageError("no Wayland display: the booth never draws through X11, where every client"
+                                 " can read what is typed")
+            path = Path(display) if display.startswith("/") else Path(environ.get("XDG_RUNTIME_DIR", "/nonexistent"), display)
+            try:
+                is_socket = stat.S_ISSOCK(path.stat().st_mode)
+            except OSError:
+                is_socket = False
+            if not is_socket:
+                raise UsageError(f"WAYLAND_DISPLAY={display}: no Wayland socket at {path}")
+    environ["QT_QPA_PLATFORM"] = platform
+    for name in ("DISPLAY", "XAUTHORITY"):
+        environ.pop(name, None)
 
 
 def serve(sock: socket.socket) -> int:
@@ -31,6 +65,7 @@ def serve(sock: socket.socket) -> int:
             pass
 
     try:
+        confine_display(os.environ)
         from tokenbooth import browser
     except (UsageError, ImportError) as e:
         reply(sock, Result("refused", error=str(e)))
