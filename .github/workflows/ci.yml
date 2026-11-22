@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # a slow package mirror should fail the step quickly, not stall the job
+  APT_OPTIONS: -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-deny
+            target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - name: Check dependencies for advisories, licenses and sources
+        run: |
+          command -v cargo-deny || cargo install cargo-deny --locked
+          cargo deny check
+      - run: cargo test
+
+  # the booth's Python, with the Chrome engine headless; the Qt engine's tests skip without PySide6
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check that Google Chrome is where the booth looks for it
+        run: test -x /opt/google/chrome/chrome
+      - name: Install the tests' dependencies
+        run: python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
+      - run: .venv/bin/pytest -rs
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install lintian
+        timeout-minutes: 10
+        run: |
+          sudo apt-get $APT_OPTIONS update
+          sudo apt-get $APT_OPTIONS install -y --no-install-recommends lintian
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-deb
+            target
+          key: package-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Install cargo-deb
+        run: command -v cargo-deb || cargo install cargo-deb --locked
+      - run: rm -rf target/debian && cargo deb --locked
+      # the tag is about uploads to Debian itself, which this package never makes
+      - name: Check the package with lintian
+        run: lintian --fail-on error,warning --suppress-tags initial-upload-closes-no-bugs target/debian/tokenbooth_*.deb

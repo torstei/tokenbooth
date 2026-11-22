@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: ci
+    # an older Ubuntu than the package supports, so it links against a glibc they all have
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Check that the tag matches Cargo.toml and the Debian changelog
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "tokenbooth") | .version')
+          [[ "v$version" == "$GITHUB_REF_NAME" ]] || { echo "tag $GITHUB_REF_NAME, Cargo.toml $version" >&2; exit 1; }
+          debian=$(head -1 packaging/changelog.Debian | sed -n 's/^tokenbooth (\(.*\)-[0-9]*).*/\1/p')
+          [[ "$debian" == "$version" ]] || { echo "Cargo.toml $version, changelog.Debian $debian" >&2; exit 1; }
+      - name: Install the packaging tools
+        run: cargo install cargo-deb cargo-auditable cargo-cyclonedx --locked
+      # the dependency list is embedded in the binary, so installed copies can be audited
+      - name: Build the package
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
+          cargo auditable build --release --locked
+          cargo deb --no-build --output dist/
+      - name: Check that a second build in another directory is identical
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/again" HEAD
+          cd "$RUNNER_TEMP/again"
+          cargo auditable build --release --locked
+          cargo deb --no-build --output dist/
+          cmp dist/*.deb "$GITHUB_WORKSPACE"/dist/*.deb
+      - name: Describe the dependencies
+        run: |
+          cargo cyclonedx --format json --no-build-deps --override-filename tokenbooth.cdx
+          # SOURCE_DATE_EPOCH makes cargo cyclonedx leave out the random serial number,
+          # which attest-sbom requires; one derived from the release keeps it reproducible
+          serial=$(uuidgen --sha1 --namespace @url --name "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME")
+          jq --arg serial "urn:uuid:$serial" '.serialNumber = $serial' tokenbooth.cdx.json > dist/tokenbooth.cdx.json
+          rm tokenbooth.cdx.json
+          rustc --version > dist/rustc-version.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: provenance
+        with:
+          subject-path: dist/*.deb
+      # beside the package in the release and the apt repository, where apt-attest looks for it
+      - name: Keep the provenance bundle
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          deb=$(basename dist/*.deb)
+          cp "$BUNDLE" "dist/$deb.sigstore.json"
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/*.deb
+          sbom-path: dist/tokenbooth.cdx.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deb
+          path: dist/
+          if-no-files-found: error
+
+  # The only job that can reach the signing key; the release environment makes it wait
+  # for approval.
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: deb
+          path: dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/*.sigstore.json dist/tokenbooth.cdx.json --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md).
+          Built reproducibly with $(cat dist/rustc-version.txt)."
+      - name: Collect every released package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir debs
+          gh release list --limit 1000 --json tagName --jq '.[].tagName' | while read -r tag; do
+            gh release download "$tag" --pattern '*.deb' --pattern '*.deb.sigstore.json' --dir debs --clobber
+          done
+      - name: Install apt-ftparchive
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends apt-utils
+      - name: Build and sign the repository
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+          fingerprint=$(gpg --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          scripts/build-apt-repo.sh debs site "$fingerprint"
+          rm -rf "$GNUPGHOME"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

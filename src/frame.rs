@@ -23,7 +23,11 @@ pub fn send(stream: &UnixStream, message: &Value, fds: &[RawFd]) -> Result<()> {
     }
     let mut data = (body.len() as u32).to_be_bytes().to_vec();
     data.extend_from_slice(&body);
-    let sent = if fds.is_empty() { 0 } else { send_with_fds(stream, &data, fds)? };
+    let sent = if fds.is_empty() {
+        0
+    } else {
+        send_with_fds(stream, &data, fds)?
+    };
     (&*stream).write_all(&data[sent..])?;
     Ok(())
 }
@@ -63,7 +67,8 @@ fn send_with_fds(stream: &UnixStream, data: &[u8], fds: &[RawFd]) -> io::Result<
 /// Reads up to `buf.len()` bytes, collecting any descriptors passed with them.
 fn recv_with_fds(stream: &UnixStream, buf: &mut [u8], fds: &mut Vec<OwnedFd>) -> Result<usize> {
     // SAFETY: CMSG_SPACE computes a size from an integer
-    let space = unsafe { libc::CMSG_SPACE((MAX_FDS * std::mem::size_of::<RawFd>()) as u32) } as usize;
+    let space =
+        unsafe { libc::CMSG_SPACE((MAX_FDS * std::mem::size_of::<RawFd>()) as u32) } as usize;
     let mut control = vec![0u8; space];
     let mut iov = libc::iovec {
         iov_base: buf.as_mut_ptr().cast(),
@@ -101,7 +106,11 @@ fn recv_with_fds(stream: &UnixStream, buf: &mut [u8], fds: &mut Vec<OwnedFd>) ->
     Ok(read as usize)
 }
 
-fn read_exactly(stream: &UnixStream, size: usize, fds: &mut Vec<OwnedFd>) -> Result<Option<Vec<u8>>> {
+fn read_exactly(
+    stream: &UnixStream,
+    size: usize,
+    fds: &mut Vec<OwnedFd>,
+) -> Result<Option<Vec<u8>>> {
     let mut data = vec![0u8; size];
     let mut filled = 0;
     while filled < size {

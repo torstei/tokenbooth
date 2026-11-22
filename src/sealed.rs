@@ -27,8 +27,16 @@ pub struct Key(Zeroizing<[u8; KEY_BYTES]>);
 
 impl Key {
     pub fn from_base64(text: &str) -> Result<Key> {
-        let bytes = Zeroizing::new(STANDARD.decode(text.trim()).context("the key is not base64")?);
-        let array: [u8; KEY_BYTES] = bytes.as_slice().try_into().ok().context("the key is not 32 bytes")?;
+        let bytes = Zeroizing::new(
+            STANDARD
+                .decode(text.trim())
+                .context("the key is not base64")?,
+        );
+        let array: [u8; KEY_BYTES] = bytes
+            .as_slice()
+            .try_into()
+            .ok()
+            .context("the key is not 32 bytes")?;
         Ok(Key(Zeroizing::new(array)))
     }
 
@@ -72,7 +80,13 @@ pub fn seal(key: &Key, uid: u32, profile: &str, state: &State) -> Result<Vec<u8>
     let aad = binding(uid, profile);
     let sealed = key
         .cipher()
-        .encrypt(&nonce, Payload { msg: &plain, aad: &aad })
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: &plain,
+                aad: &aad,
+            },
+        )
         .map_err(|_| anyhow::anyhow!("cannot seal"))?;
     Ok([MAGIC.as_slice(), nonce.as_slice(), &sealed].concat())
 }
@@ -86,7 +100,13 @@ pub fn open(key: &Key, uid: u32, profile: &str, blob: &[u8]) -> Result<State> {
     let aad = binding(uid, profile);
     let plain = Zeroizing::new(
         key.cipher()
-            .decrypt(&nonce, Payload { msg: sealed, aad: &aad })
+            .decrypt(
+                &nonce,
+                Payload {
+                    msg: sealed,
+                    aad: &aad,
+                },
+            )
             .map_err(|_| anyhow::anyhow!("the key does not open it"))?,
     );
     Ok(serde_json::from_slice(&plain)?)
@@ -138,7 +158,12 @@ impl Vaulted {
     pub fn save(&self, name: &str, key: &Key, state: &State) -> Result<()> {
         let blob = seal(key, self.uid, name, state)?;
         let partial = self.dir.join(format!(".{name}.new"));
-        let mut file = OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&partial)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&partial)?;
         file.write_all(&blob)?;
         file.sync_all()?;
         std::fs::rename(&partial, self.path(name)?)?;
@@ -160,7 +185,11 @@ mod tests {
     use serde_json::json;
 
     fn state() -> State {
-        State { token: Some("t0k3n".into()), expires: Some(1.5e9), keep: vec![json!({"name": "SID"})] }
+        State {
+            token: Some("t0k3n".into()),
+            expires: Some(1.5e9),
+            keep: vec![json!({"name": "SID"})],
+        }
     }
 
     #[test]
@@ -194,7 +223,10 @@ mod tests {
         store.save("gopro", &key, &state()).unwrap();
         assert!(matches!(store.load("gopro", &key).unwrap(), Loaded::Opened(s) if s == state()));
         let other = Key::from_base64(&new_key().unwrap()).unwrap();
-        assert!(matches!(store.load("gopro", &other).unwrap(), Loaded::Unreadable));
+        assert!(matches!(
+            store.load("gopro", &other).unwrap(),
+            Loaded::Unreadable
+        ));
         assert!(store.forget("gopro").unwrap());
         assert!(!store.forget("gopro").unwrap());
         assert!(store.load("../x", &key).is_err());

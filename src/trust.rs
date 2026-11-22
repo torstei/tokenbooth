@@ -25,7 +25,13 @@ pub struct Dir {
 }
 
 /// The decision, from facts gathered about the connection.
-pub fn judge(peer_uid: u32, own_uid: u32, daemon_uid: Option<u32>, listener_dir: Option<Dir>, allow_same_uid: bool) -> Result<()> {
+pub fn judge(
+    peer_uid: u32,
+    own_uid: u32,
+    daemon_uid: Option<u32>,
+    listener_dir: Option<Dir>,
+    allow_same_uid: bool,
+) -> Result<()> {
     if allow_same_uid && peer_uid == own_uid {
         return Ok(());
     }
@@ -53,11 +59,20 @@ pub fn check(stream: &UnixStream) -> Result<()> {
         .and_then(|a| a.as_pathname())
         .and_then(Path::parent)
         .and_then(|dir| std::fs::metadata(dir).ok())
-        .map(|meta| Dir { owner: meta.uid(), mode: meta.mode() });
+        .map(|meta| Dir {
+            owner: meta.uid(),
+            mode: meta.mode(),
+        });
     // SAFETY: getuid has no preconditions
     let own = unsafe { libc::getuid() };
     let allow = cfg!(debug_assertions) && std::env::var_os(ALLOW_SAME_UID_ENV).is_some();
-    judge(peer.uid, own, procs::uid_of_user("tokenbooth"), listener_dir, allow)
+    judge(
+        peer.uid,
+        own,
+        procs::uid_of_user("tokenbooth"),
+        listener_dir,
+        allow,
+    )
 }
 
 #[cfg(test)]
@@ -66,7 +81,10 @@ mod tests {
 
     const ME: u32 = 1000;
     const DAEMON: Option<u32> = Some(966);
-    const ROOTS: Option<Dir> = Some(Dir { owner: 0, mode: 0o40755 });
+    const ROOTS: Option<Dir> = Some(Dir {
+        owner: 0,
+        mode: 0o40755,
+    });
 
     #[test]
     fn the_daemon_account_or_root_in_a_root_directory_is_trusted() {
@@ -79,8 +97,22 @@ mod tests {
         for (peer, dir, complaint) in [
             (ME, ROOTS, "your own user"),
             (1001, ROOTS, "neither tokenbooth's nor root's"),
-            (0, Some(Dir { owner: 0, mode: 0o41777 }), "others than root can write"),
-            (0, Some(Dir { owner: ME, mode: 0o40700 }), "others than root can write"),
+            (
+                0,
+                Some(Dir {
+                    owner: 0,
+                    mode: 0o41777,
+                }),
+                "others than root can write",
+            ),
+            (
+                0,
+                Some(Dir {
+                    owner: ME,
+                    mode: 0o40700,
+                }),
+                "others than root can write",
+            ),
             (0, None, "no address"),
         ] {
             let error = judge(peer, ME, DAEMON, dir, false).unwrap_err().to_string();

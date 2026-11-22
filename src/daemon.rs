@@ -41,7 +41,11 @@ pub fn run(listener: UnixListener, config: Config) -> Result<()> {
         let config = config.clone();
         std::thread::spawn(move || {
             if let Err(e) = serve(&stream, &config) {
-                let _ = frame::send(&stream, &json!({"type": "error", "message": format!("{e:#}")}), &[]);
+                let _ = frame::send(
+                    &stream,
+                    &json!({"type": "error", "message": format!("{e:#}")}),
+                    &[],
+                );
             }
         });
     }
@@ -57,7 +61,8 @@ struct Caller {
 impl Caller {
     fn of(stream: &UnixStream) -> Result<Caller> {
         let cred = procs::peer_cred(stream).context("cannot read the caller's credentials")?;
-        let opener = procs::connected_pidfd(stream).context("cannot hold the caller by pidfd (Linux 6.5 or later)")?;
+        let opener = procs::connected_pidfd(stream)
+            .context("cannot hold the caller by pidfd (Linux 6.5 or later)")?;
         Ok(Caller { cred, opener })
     }
 
@@ -81,7 +86,10 @@ impl Caller {
 }
 
 fn text<'a>(request: &'a Message, key: &str) -> Result<&'a str> {
-    request.get(key).and_then(Value::as_str).with_context(|| format!("the request lacks {key}"))
+    request
+        .get(key)
+        .and_then(Value::as_str)
+        .with_context(|| format!("the request lacks {key}"))
 }
 
 /// The one fd a request other than a login may carry: a connection to pidvault.
@@ -107,7 +115,13 @@ fn serve(stream: &UnixStream, config: &Config) -> Result<()> {
         Some("status") => {
             let vaults = match fd {
                 None => Value::Null,
-                Some(fd) => json!(caller.unlocked(Some(fd), config)?.unlocked.keys().collect::<Vec<_>>()),
+                Some(fd) => json!(
+                    caller
+                        .unlocked(Some(fd), config)?
+                        .unlocked
+                        .keys()
+                        .collect::<Vec<_>>()
+                ),
             };
             caller.still_there()?;
             json!({"type": "status", "uid": caller.cred.uid, "pid": caller.cred.pid, "state": state,
@@ -129,7 +143,9 @@ fn serve(stream: &UnixStream, config: &Config) -> Result<()> {
         Some("profile-show") => {
             let unlocked = caller.unlocked(fd, config)?;
             let name = text(&request, "name")?;
-            let (text, profile) = Store::open(&state)?.load(name)?.with_context(|| format!("no profile {name:?}"))?;
+            let (text, profile) = Store::open(&state)?
+                .load(name)?
+                .with_context(|| format!("no profile {name:?}"))?;
             unlocked.require(&profile.vault)?;
             json!({"type": "profile", "name": name, "toml": text})
         }
@@ -150,7 +166,9 @@ fn serve(stream: &UnixStream, config: &Config) -> Result<()> {
             let unlocked = caller.unlocked(fd, config)?;
             let name = text(&request, "name")?;
             let store = Store::open(&state)?;
-            let (_, profile) = store.load(name)?.with_context(|| format!("no profile {name:?}"))?;
+            let (_, profile) = store
+                .load(name)?
+                .with_context(|| format!("no profile {name:?}"))?;
             // a profile whose vault is gone guards nothing: its sealed state cannot be opened
             if unlocked.existing.contains(&profile.vault) {
                 unlocked.require(&profile.vault)?;
@@ -162,7 +180,9 @@ fn serve(stream: &UnixStream, config: &Config) -> Result<()> {
         Some("forget") => {
             let unlocked = caller.unlocked(fd, config)?;
             let name = text(&request, "name")?;
-            let (_, profile) = Store::open(&state)?.load(name)?.with_context(|| format!("no profile {name:?}"))?;
+            let (_, profile) = Store::open(&state)?
+                .load(name)?
+                .with_context(|| format!("no profile {name:?}"))?;
             unlocked.require(&profile.vault)?;
             let forgotten = Vaulted::open(&state, caller.cred.uid)?.forget(name)?;
             json!({"type": "ok", "forgotten": forgotten})
@@ -173,7 +193,9 @@ fn serve(stream: &UnixStream, config: &Config) -> Result<()> {
 }
 
 fn now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 /// Profiles with a login running, by uid and name: two at once would race to save.
@@ -205,7 +227,14 @@ impl Drop for Running {
 /// daemon names the vault holding the profile's key, the client sends the key, and the daemon
 /// answers from the sealed state or runs a booth on the client's Wayland connection, relaying
 /// its log lines, before sending the result.
-fn login(stream: &UnixStream, caller: &Caller, request: &Message, fds: Vec<OwnedFd>, config: &Config, state: &Path) -> Result<()> {
+fn login(
+    stream: &UnixStream,
+    caller: &Caller,
+    request: &Message,
+    fds: Vec<OwnedFd>,
+    config: &Config,
+    state: &Path,
+) -> Result<()> {
     if fds.is_empty() || fds.len() > 2 {
         bail!("pass a connection to pidvault, and to log in a connection to the Wayland display");
     }
@@ -215,11 +244,18 @@ fn login(stream: &UnixStream, caller: &Caller, request: &Message, fds: Vec<Owned
     let name = text(request, "name")?;
     let refresh = request["refresh"].as_bool().unwrap_or(false);
     let log = request["log"].as_bool().unwrap_or(false);
-    let (_, profile) = Store::open(state)?.load(name)?.with_context(|| format!("no profile {name:?}"))?;
+    let (_, profile) = Store::open(state)?
+        .load(name)?
+        .with_context(|| format!("no profile {name:?}"))?;
     unlocked.require(&profile.vault)?;
 
-    frame::send(stream, &json!({"type": "need-key", "vault": profile.vault}), &[])?;
-    let (reply, _) = frame::receive(stream)?.context("the client hung up before sending the key")?;
+    frame::send(
+        stream,
+        &json!({"type": "need-key", "vault": profile.vault}),
+        &[],
+    )?;
+    let (reply, _) =
+        frame::receive(stream)?.context("the client hung up before sending the key")?;
     if reply["type"] != "key" {
         bail!("expected the key, got {:?}", reply["type"]);
     }
@@ -240,7 +276,11 @@ fn login(stream: &UnixStream, caller: &Caller, request: &Message, fds: Vec<Owned
         && let (Some(token), Some(expires)) = (&current.token, current.expires)
         && expires > now() + EXPIRY_MARGIN
     {
-        return frame::send(stream, &json!({"type": "result", "outcome": "token", "token": token, "expires": expires}), &[]);
+        return frame::send(
+            stream,
+            &json!({"type": "result", "outcome": "token", "token": token, "expires": expires}),
+            &[],
+        );
     }
     let wayland = wayland.context("no Wayland display to open the login window on")?;
     let _running = Running::claim(caller.cred.uid, name)?;
@@ -251,7 +291,10 @@ fn login(stream: &UnixStream, caller: &Caller, request: &Message, fds: Vec<Owned
     };
     let outcome = result["outcome"].as_str().unwrap_or("refused");
     if outcome == "refused" {
-        bail!("the booth refused: {}", result["error"].as_str().unwrap_or("no reason given"));
+        bail!(
+            "the booth refused: {}",
+            result["error"].as_str().unwrap_or("no reason given")
+        );
     }
     if !profile.keep_cookies.is_empty() {
         current.keep = result["keep"].as_array().cloned().unwrap_or_default();
@@ -281,7 +324,10 @@ fn state_dir(root: &Path, uid: u32) -> Result<PathBuf> {
     // SAFETY: geteuid has no preconditions
     let me = unsafe { libc::geteuid() };
     if !meta.is_dir() || meta.uid() != me || meta.mode() & 0o077 != 0 {
-        bail!("{} is not a private directory of the daemon's", dir.display());
+        bail!(
+            "{} is not a private directory of the daemon's",
+            dir.display()
+        );
     }
     Ok(dir)
 }
@@ -296,7 +342,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = state_dir(root.path(), 1000).unwrap();
         assert_eq!(dir, root.path().join("1000"));
-        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
         assert_eq!(state_dir(root.path(), 1000).unwrap(), dir);
     }
 

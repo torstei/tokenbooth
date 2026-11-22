@@ -1,0 +1,15 @@
+# For apt-attest: requires tokenbooth, and everything from tokenbooth's apt repository, to be
+# built by tokenbooth's release workflow from a v* tag on a GitHub-hosted runner.
+[match]
+packages = ["tokenbooth"]
+origins  = ["https://torstei.github.io/tokenbooth"]
+
+[identity]
+issuer         = "https://token.actions.githubusercontent.com"
+repository     = "torstei/tokenbooth"
+repository_id  = 1465304568
+owner_id       = 1751971
+workflow       = ".github/workflows/release.yml"
+refs           = ["refs/tags/v*"]
+runner         = "github-hosted"
+predicate_type = "https://slsa.dev/provenance/v1"
