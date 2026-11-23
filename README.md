@@ -70,6 +70,9 @@ echo "deb [signed-by=/etc/apt/keyrings/tokenbooth.asc] https://torstei.github.io
 sudo apt update && sudo apt install tokenbooth
 ```
 
+The repository's signing key, also in `packaging/tokenbooth-apt.asc`, has the fingerprint
+`0231BE5E3FC61AA04F84A55316F76D5B91EED78E`.
+
 Each release is built and attested by `.github/workflows/release.yml` from a `v*` tag, and its
 package and provenance bundle are on the [releases](https://github.com/torstei/tokenbooth/releases)
 page (`gh attestation verify tokenbooth_*_amd64.deb --repo torstei/tokenbooth`). The package
