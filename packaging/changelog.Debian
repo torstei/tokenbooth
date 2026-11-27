@@ -2,4 +2,4 @@ tokenbooth (0.1.0-1) unstable; urgency=medium
 
   * First package: the daemon and client, the booth on Google Chrome.
 
- -- Torstein Tauno Svendsen <torstei@gmail.com>  Sun, 22 Nov 2026 12:00:00 +0000
+ -- Torstein Tauno Svendsen <torstei@gmail.com>  Thu, 26 Nov 2026 12:00:00 +0000
